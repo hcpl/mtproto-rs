@@ -3,8 +3,10 @@
 use std::cmp;
 use std::fmt;
 use std::mem;
+use std::net::SocketAddr;
 
 use chrono::{Timelike, Utc};
+use hyper;
 use serde::de::{DeserializeSeed, DeserializeOwned};
 use serde_mtproto::{Boxed, Identifiable, MtProtoSized, WithSize};
 
@@ -40,13 +42,17 @@ enum MessagePurpose {
 /// https://core.telegram.org/mtproto#high-level-component-rpc-query-language-api.
 #[derive(Debug)]
 pub struct Session {
+    // Private data
     session_id: i64,
     //temp_session_id: Option<i64>    // Not used (yet)
     server_salts: Vec<Salt>,
     seq_no: i32,
     auth_key: Option<AuthKey>,
     to_ack: Vec<i64>,
-    app_info: AppInfo,
+
+    // Public data
+    pub app_info: AppInfo,
+    pub connection: Connection,
 }
 
 impl Session {
@@ -58,7 +64,9 @@ impl Session {
             seq_no: 0,
             auth_key: None,
             to_ack: Vec::new(),
+
             app_info: app_info,
+            connection: Connection::default(),
         }
     }
 
@@ -220,4 +228,45 @@ impl Session {
 
         seed.deserialize(&mut deserializer).map_err(Into::into)
     }
+}
+
+
+lazy_static! {
+    pub static ref TCP_SERVER_ADDRS: [SocketAddr; 1] = [
+        ([149,154,167,51], 443).into(),
+    ];
+
+    pub static ref HTTP_SERVER_ADDRS: [hyper::Uri; 1] = [
+        "http://149.154.167.51:443/api".parse().unwrap(),  // safe to unwrap
+    ];
+}
+
+
+#[derive(Debug)]
+pub enum Connection {
+    Tcp(TcpType, SocketAddr),
+    Http(hyper::Uri),
+}
+
+impl Default for Connection {
+    fn default() -> Connection {
+        Connection::tcp_default()
+    }
+}
+
+impl Connection {
+    pub fn tcp_default() -> Connection {
+        Connection::Tcp(TcpType::Full, TCP_SERVER_ADDRS[0])
+    }
+
+    pub fn http_default() -> Connection {
+        Connection::Http(HTTP_SERVER_ADDRS[0].clone())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TcpType {
+    Full,
+    Intermediate,
+    Abridged,
 }

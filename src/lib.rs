@@ -8,6 +8,9 @@ extern crate erased_serde;
 #[macro_use]
 extern crate error_chain;
 extern crate extprim;
+extern crate hyper;
+#[macro_use]
+extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate num_traits;
