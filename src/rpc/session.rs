@@ -3,10 +3,8 @@
 use std::cmp;
 use std::fmt;
 use std::mem;
-use std::net::SocketAddr;
 
 use chrono::{Timelike, Utc};
-use hyper;
 use serde::de::{DeserializeSeed, DeserializeOwned};
 use serde_mtproto::{Boxed, Identifiable, MtProtoSized, WithSize};
 
@@ -15,6 +13,7 @@ use manual_types::Object;
 use tl::TLObject;
 
 use super::{AppInfo, Salt};
+use super::connection::Connection;
 use super::encryption::AuthKey;
 use super::message::{DecryptedData, Message, MessageSeed};
 
@@ -228,45 +227,4 @@ impl Session {
 
         seed.deserialize(&mut deserializer).map_err(Into::into)
     }
-}
-
-
-lazy_static! {
-    pub static ref TCP_SERVER_ADDRS: [SocketAddr; 1] = [
-        ([149,154,167,51], 443).into(),
-    ];
-
-    pub static ref HTTP_SERVER_ADDRS: [hyper::Uri; 1] = [
-        "http://149.154.167.51:443/api".parse().unwrap(),  // safe to unwrap
-    ];
-}
-
-
-#[derive(Debug)]
-pub enum Connection {
-    Tcp(TcpType, SocketAddr),
-    Http(hyper::Uri),
-}
-
-impl Default for Connection {
-    fn default() -> Connection {
-        Connection::tcp_default()
-    }
-}
-
-impl Connection {
-    pub fn tcp_default() -> Connection {
-        Connection::Tcp(TcpType::Full, TCP_SERVER_ADDRS[0])
-    }
-
-    pub fn http_default() -> Connection {
-        Connection::Http(HTTP_SERVER_ADDRS[0].clone())
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum TcpType {
-    Full,
-    Intermediate,
-    Abridged,
 }

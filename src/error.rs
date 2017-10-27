@@ -86,5 +86,10 @@ error_chain! {
             description("Unknown constructor id found while deserializing")
             display("Unknown constructor id found while deserializing {}: {:#x}", type_or_variant, ctor_id)
         }
+
+        MessageTooLong(len: usize) {
+            description("Message is too long to send")
+            display("Message of length {} is too long to send", len)
+        }
     }
 }

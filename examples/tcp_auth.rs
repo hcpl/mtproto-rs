@@ -1,5 +1,4 @@
 extern crate byteorder;
-extern crate crc;
 extern crate dotenv;
 extern crate env_logger;
 #[macro_use]
@@ -17,15 +16,13 @@ extern crate tokio_io;
 
 
 use std::fmt;
-use std::io;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use crc::crc32;
 use extprim::i128;
 use futures::Future;
 use mtproto::tl::dynamic::TLObject;
-use mtproto::rpc::{AppInfo, Session};
-use mtproto::rpc::message::{Message, MessageType};
+use mtproto::rpc::{AppInfo, Message, MessageType, Session};
+use mtproto::rpc::connection::{TCP_SERVER_ADDRS, TcpConnection, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
@@ -63,11 +60,6 @@ mod error {
                 description("Message length is neither 4, nor >= 24 bytes")
                 display("Message length is neither 4, nor >= 24 bytes: {}", found_len)
             }
-
-            MessageTooLong(len: usize) {
-                description("Message too long to send")
-                display("Message of length {} too long to send", len)
-            }
         }
     }
 }
@@ -90,17 +82,15 @@ macro_rules! tryf {
 }
 
 
-fn auth<M>(handle: Handle, mut tcp_mode: M) -> Box<Future<Item = (), Error = error::Error>>
-    where M: 'static + MtProtoTcpMode
-{
+fn auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = error::Error>> {
     let app_info = tryf!(fetch_app_info());
 
-    let remote_addr = "149.154.167.51:443".parse().unwrap();
-    info!("Address: {:?}", &remote_addr);
+    let remote_addr = TCP_SERVER_ADDRS[0];
+    let mut conn = TcpConnection::new(tcp_mode, remote_addr);
     let socket = TcpStream::connect(&remote_addr, &handle).map_err(error::Error::from);
 
     let auth_future = socket.and_then(|socket|
-        -> Box<Future<Item = (TcpStream, Vec<u8>, Session, ThreadRng, M, i128::i128), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Vec<u8>, Session, ThreadRng, TcpConnection, i128::i128), Error = error::Error>>
     {
         let mut rng = rand::thread_rng();
         let mut session = Session::new(rng.gen(), app_info);
@@ -111,11 +101,11 @@ fn auth<M>(handle: Handle, mut tcp_mode: M) -> Box<Future<Item = (), Error = err
         };
 
         let serialized_message = tryf!(create_serialized_message(&mut session, req_pq, MessageType::PlainText));
-        let request = tcp_mode.request(socket, serialized_message);
+        let request = conn.request(socket, serialized_message);
 
-        Box::new(request.map(move |(s, b)| (s, b, session, rng, tcp_mode, nonce)))
-    }).and_then(|(socket, response_bytes, mut session, mut rng, mut tcp_mode, nonce)|
-        -> Box<Future<Item = (TcpStream, Vec<u8>, Session, ThreadRng, M), Error = error::Error>>
+        Box::new(request.map(move |(s, b)| (s, b, session, rng, conn, nonce)).map_err(Into::into))
+    }).and_then(|(socket, response_bytes, mut session, mut rng, mut conn, nonce)|
+        -> Box<Future<Item = (TcpStream, Vec<u8>, Session, ThreadRng, TcpConnection), Error = error::Error>>
     {
         let response: Message<schema::ResPQ> =
             tryf!(parse_response(&session, &response_bytes, MessageType::PlainText));
@@ -181,10 +171,10 @@ fn auth<M>(handle: Handle, mut tcp_mode: M) -> Box<Future<Item = (), Error = err
         };
 
         let serialized_message = tryf!(create_serialized_message(&mut session, req_dh_params, MessageType::PlainText));
-        let request = tcp_mode.request(socket, serialized_message);
+        let request = conn.request(socket, serialized_message);
 
-        Box::new(request.map(move |(s, b)| (s, b, session, rng, tcp_mode)))
-    }).and_then(|(_socket, response_bytes, session, _rng, _tcp_mode)| {
+        Box::new(request.map(move |(s, b)| (s, b, session, rng, conn)).map_err(Into::into))
+    }).and_then(|(_socket, response_bytes, session, _rng, _conn)| {
         let _: Message<schema::Server_DH_Params> =
             tryf!(parse_response(&session, &response_bytes, MessageType::PlainText));
 
@@ -260,191 +250,18 @@ fn parse_response<T>(session: &Session,
 }
 
 
-trait MtProtoTcpMode {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>;
-}
-
-struct FullMode {
-    send_counter: u32,
-}
-
-impl FullMode {
-    fn new() -> FullMode {
-        FullMode { send_counter: 0 }
-    }
-}
-
-impl MtProtoTcpMode for FullMode {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
-    {
-        let len = serialized_message.len() + 12;
-        let data = if len <= 0xff_ff_ff_ff {
-            let mut data = vec![0; len];
-
-            LittleEndian::write_u32(&mut data[0..4], len as u32);
-            LittleEndian::write_u32(&mut data[4..8], self.send_counter);
-            data[8..len-4].copy_from_slice(&serialized_message);
-
-            let crc = crc32::checksum_ieee(&data[0..len-4]);
-            self.send_counter += 1;
-
-            LittleEndian::write_u32(&mut data[len-4..], crc);
-
-            data
-        } else {
-            bailf!(ErrorKind::MessageTooLong(len));
-        };
-
-        let request = tokio_io::io::write_all(socket, data);
-
-        let response = request.and_then(|(socket, _request_bytes)| {
-            tokio_io::io::read_exact(socket, [0; 8])
-        }).and_then(|(socket, first_bytes)| {
-            let len = LittleEndian::read_u32(&first_bytes[0..4]);
-            let ulen = len as usize;
-            // TODO: Check seq_no
-            let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
-
-            tokio_io::io::read_exact(socket, vec![0; ulen - 8]).and_then(move |(socket, last_bytes)| {
-                let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
-                let mut body = last_bytes;
-                body.truncate(ulen - 12);
-
-                let mut value = 0;
-                value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[0..4]);
-                value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
-                value = crc32::update(value, &crc32::IEEE_TABLE, &body);
-
-                if value == checksum {
-                    futures::future::ok((socket, body))
-                } else {
-                    futures::future::err(io::Error::new(io::ErrorKind::Other, "invalid checksum"))
-                }
-            })
-        });
-
-        Box::new(response.map_err(Into::into))
-    }
-}
-
-struct IntermediateMode {
-    is_first_request: bool,
-}
-
-impl IntermediateMode {
-    fn new() -> IntermediateMode {
-        IntermediateMode { is_first_request: true }
-    }
-}
-
-impl MtProtoTcpMode for IntermediateMode {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
-    {
-        let len = serialized_message.len();
-        let data = if len <= 0xff_ff_ff_ff {
-            let mut data = vec![0; 4 + len];
-
-            LittleEndian::write_u32(&mut data[0..4], len as u32);
-            data[4..].copy_from_slice(&serialized_message);
-
-            data
-        } else {
-            bailf!(ErrorKind::MessageTooLong(len));
-        };
-
-        let init: Box<Future<Item = (TcpStream, &'static [u8]), Error = io::Error>> = if self.is_first_request {
-            self.is_first_request = false;
-            Box::new(tokio_io::io::write_all(socket, b"\xee\xee\xee\xee".as_ref()))
-        } else {
-            Box::new(futures::future::ok((socket, [].as_ref())))
-        };
-
-        let request = init.and_then(|(socket, _init_bytes)| {
-            tokio_io::io::write_all(socket, data)
-        });
-
-        let response = request.and_then(|(socket, _request_bytes)| {
-            tokio_io::io::read_exact(socket, [0; 4])
-        }).and_then(|(socket, bytes_len)| {
-            let len = LittleEndian::read_u32(&bytes_len);
-            tokio_io::io::read_exact(socket, vec![0; len as usize]) // Use safe cast
-        });
-
-        Box::new(response.map_err(Into::into))
-    }
-}
-
-struct AbridgedMode {
-    is_first_request: bool,
-}
-
-impl AbridgedMode {
-    fn new() -> AbridgedMode {
-        AbridgedMode { is_first_request: true }
-    }
-}
-
-impl MtProtoTcpMode for AbridgedMode {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
-    {
-        let mut data = if self.is_first_request {
-            self.is_first_request = false;
-            vec![0xef]
-        } else {
-            vec![]
-        };
-
-        let len = serialized_message.len() / 4;
-        if len < 0x7f {
-            data.push(len as u8);
-        } else if len < 0xff_ff_ff {
-            data.push(0x7f);
-            LittleEndian::write_uint(&mut data, len as u64, 3); // Use safe cast here
-        } else {
-            bailf!(ErrorKind::MessageTooLong(len));
-        }
-
-        data.extend(serialized_message);
-        let request = tokio_io::io::write_all(socket, data);
-
-        let response = request.and_then(|(socket, _request_bytes)| {
-            tokio_io::io::read_exact(socket, [0; 1])
-        }).and_then(|(socket, byte_id)| {
-            let boxed: Box<Future<Item = (TcpStream, usize), Error = io::Error>> = if byte_id == [0x7f] {
-                Box::new(tokio_io::io::read_exact(socket, [0; 3]).map(|(socket, bytes_len)| {
-                    let len = LittleEndian::read_uint(&bytes_len, 3) as usize * 4;
-                    (socket, len)
-                }))
-            } else {
-                Box::new(futures::future::ok((socket, byte_id[0] as usize * 4)))
-            };
-
-            boxed
-        }).and_then(|(socket, len)| {
-            tokio_io::io::read_exact(socket, vec![0; len])
-        });
-
-        Box::new(response.map_err(Into::into))
-    }
-}
-
-
 fn run() -> error::Result<()> {
     env_logger::init()?;
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 
-    let auth_future = auth(core.handle(), AbridgedMode::new());
+    let auth_future = auth(core.handle(), TcpMode::Abridged);
     core.run(auth_future)?;
 
-    let auth_future = auth(core.handle(), IntermediateMode::new());
+    let auth_future = auth(core.handle(), TcpMode::Intermediate);
     core.run(auth_future)?;
 
-    let auth_future = auth(core.handle(), FullMode::new());
+    let auth_future = auth(core.handle(), TcpMode::Full);
     core.run(auth_future)?;
 
     Ok(())
