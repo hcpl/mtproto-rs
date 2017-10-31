@@ -7,7 +7,7 @@ Intended to provide low-level features to create a robust foundation for
 higher-level libraries such as `telegram-rs`.
 
 Supports Rust 1.19 and newer.
-Older versions may work, but not guaranteed to.
+Older versions may work, but are not guaranteed to.
 
 
 ## Features

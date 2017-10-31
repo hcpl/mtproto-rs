@@ -91,5 +91,11 @@ error_chain! {
             description("Message is too long to send")
             display("Message of length {} is too long to send", len)
         }
+
+        TcpFullModeResponseInvalidChecksum(expected: u32, found: u32) {
+            description("Invalid CRC32 checksum of a response received via TCP in full mode")
+            display("Invalid CRC32 checksum of a response received via TCP in full mode \
+                     (expected {}, found {})", expected, found)
+        }
     }
 }

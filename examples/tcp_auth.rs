@@ -26,9 +26,7 @@ use mtproto::rpc::connection::{TCP_SERVER_ADDRS, TcpConnection, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_mtproto::MtProtoSized;
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::{Core, Handle};
 
@@ -59,6 +57,11 @@ mod error {
             BadMessage(found_len: usize) {
                 description("Message length is neither 4, nor >= 24 bytes")
                 display("Message length is neither 4, nor >= 24 bytes: {}", found_len)
+            }
+
+            ErrorsCollection(errors: Vec<Error>) {
+                description("Collection of errors of this type")
+                display("Collection of errors of this type: {:?}", errors)
             }
         }
     }
@@ -100,8 +103,8 @@ fn auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = erro
             nonce: nonce,
         };
 
-        let serialized_message = tryf!(create_serialized_message(&mut session, req_pq, MessageType::PlainText));
-        let request = conn.request(socket, serialized_message);
+        let message = tryf!(create_message(&mut session, req_pq, MessageType::PlainText));
+        let request = conn.request(socket, message);
 
         Box::new(request.map(move |(s, b)| (s, b, session, rng, conn, nonce)).map_err(Into::into))
     }).and_then(|(socket, response_bytes, mut session, mut rng, mut conn, nonce)|
@@ -170,8 +173,8 @@ fn auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = erro
             encrypted_data: encrypted_data.to_vec().into(),
         };
 
-        let serialized_message = tryf!(create_serialized_message(&mut session, req_dh_params, MessageType::PlainText));
-        let request = conn.request(socket, serialized_message);
+        let message = tryf!(create_message(&mut session, req_dh_params, MessageType::PlainText));
+        let request = conn.request(socket, message);
 
         Box::new(request.map(move |(s, b)| (s, b, session, rng, conn)).map_err(Into::into))
     }).and_then(|(_socket, response_bytes, session, _rng, _conn)| {
@@ -200,24 +203,19 @@ fn fetch_app_info() -> error::Result<AppInfo> {
     })
 }
 
-fn create_serialized_message<T>(session: &mut Session,
-                                data: T,
-                                message_type: MessageType)
-                               -> error::Result<Vec<u8>>
-    where T: fmt::Debug + Serialize + TLObject
+fn create_message<T>(session: &mut Session,
+                     data: T,
+                     message_type: MessageType)
+                    -> error::Result<Message<T>>
+    where T: fmt::Debug + TLObject
 {
     let message = match message_type {
         MessageType::PlainText => session.create_plain_text_message(data)?,
         MessageType::Encrypted => session.create_encrypted_message_no_acks(data)?.unwrap(),
     };
     info!("Message to send: {:#?}", &message);
-    let serialized_message = serde_mtproto::to_bytes(&message)?;
-    info!("Request bytes: {:?}", &serialized_message);
 
-    // Here we do mean to unwrap since it should fail if something goes wrong anyway
-    assert_eq!(message.size_hint().unwrap(), serialized_message.len());
-
-    Ok(serialized_message)
+    Ok(message)
 }
 
 fn parse_response<T>(session: &Session,
@@ -250,19 +248,34 @@ fn parse_response<T>(session: &Session,
 }
 
 
+fn run_collect_errors(core: &mut Core, tcp_modes: &[TcpMode]) -> Result<(), Vec<error::Error>> {
+    let mut errors = vec![];
+
+    for tcp_mode in tcp_modes {
+        let auth_future = auth(core.handle(), *tcp_mode);
+
+        if let Err(e) = core.run(auth_future) {
+            errors.push(e);
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
 fn run() -> error::Result<()> {
     env_logger::init()?;
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 
-    let auth_future = auth(core.handle(), TcpMode::Abridged);
-    core.run(auth_future)?;
-
-    let auth_future = auth(core.handle(), TcpMode::Intermediate);
-    core.run(auth_future)?;
-
-    let auth_future = auth(core.handle(), TcpMode::Full);
-    core.run(auth_future)?;
+    run_collect_errors(&mut core, &[
+        TcpMode::Abridged,
+        TcpMode::Intermediate,
+        TcpMode::Full,
+    ]).map_err(ErrorKind::ErrorsCollection)?;
 
     Ok(())
 }

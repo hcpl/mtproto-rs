@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 
@@ -5,10 +6,14 @@ use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
 use futures::{self, Future};
 use log::LogLevel;
+use serde::Serialize;
+use serde_mtproto::{self, MtProtoSized};
 use tokio_core::net::TcpStream;
 use tokio_io;
 
+use tl::TLObject;
 use error::{self, ErrorKind};
+use rpc::Message;
 
 use super::TCP_SERVER_ADDRS;
 
@@ -40,16 +45,15 @@ impl TcpConnection {
         TcpConnection { mode_info: TcpModeInfo::from(mode), server_addr }
     }
 
-    pub fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
+    pub fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject
     {
-        let mode_info: &mut MtProtoTcpMode = match self.mode_info {
-            TcpModeInfo::Full(ref mut mode_info) => mode_info,
-            TcpModeInfo::Intermediate(ref mut mode_info) => mode_info,
-            TcpModeInfo::Abridged(ref mut mode_info) => mode_info,
-        };
-
-        mode_info.request(socket, serialized_message)
+        match self.mode_info {
+            TcpModeInfo::Full(ref mut mode_info)         => mode_info.request(socket, message),
+            TcpModeInfo::Intermediate(ref mut mode_info) => mode_info.request(socket, message),
+            TcpModeInfo::Abridged(ref mut mode_info)     => mode_info.request(socket, message),
+        }
     }
 }
 
@@ -85,10 +89,20 @@ macro_rules! bailf {
     }
 }
 
+macro_rules! tryf {
+    ($e:expr) => {
+        match { $e } {
+            Ok(v) => v,
+            Err(e) => bailf!(e),
+        }
+    }
+}
+
 
 trait MtProtoTcpMode {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>;
+    fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
+        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject;
 }
 
 
@@ -104,38 +118,47 @@ impl FullModeInfo {
 }
 
 impl MtProtoTcpMode for FullModeInfo {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
+    fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject
     {
-        let len = serialized_message.len() + 12;
-        let data = if len <= 0xff_ff_ff_ff {
-            let mut data = vec![0; len];
+        let size = tryf!(message.size_hint()) + 12;  // FIXME: Can overflow on 32-bit systems
+        let data = if size <= 0xff_ff_ff_ff {
+            let mut buf = vec![0; size];
 
-            LittleEndian::write_u32(&mut data[0..4], len as u32);  // cast is safe here
-            LittleEndian::write_u32(&mut data[4..8], self.sent_counter);
-            data[8..len-4].copy_from_slice(&serialized_message);
+            LittleEndian::write_u32(&mut buf[0..4], size as u32);  // cast is safe here
+            LittleEndian::write_u32(&mut buf[4..8], self.sent_counter);
+            tryf!(serde_mtproto::to_writer(&mut buf[8..size-4], &message));
 
-            let crc = crc32::checksum_ieee(&data[0..len-4]);
+            let crc = crc32::checksum_ieee(&buf[0..size-4]);
+            LittleEndian::write_u32(&mut buf[size-4..], crc);
+
             self.sent_counter += 1;
 
-            LittleEndian::write_u32(&mut data[len-4..], crc);
-
-            data
+            buf
         } else {
-            bailf!(ErrorKind::MessageTooLong(len));
+            bailf!(ErrorKind::MessageTooLong(size));
         };
 
         let request = tokio_io::io::write_all(socket, data);
 
         let response = request.and_then(|(socket, _request_bytes)| {
             tokio_io::io::read_exact(socket, [0; 8])
-        }).and_then(|(socket, first_bytes)| {
+        }).then(|result|
+            -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        {
+            let (socket, first_bytes) = tryf!(result);
+
             let len = LittleEndian::read_u32(&first_bytes[0..4]);
             let ulen = len as usize;  // FIXME: use safe cast here
             // TODO: check seq_no
             let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-            tokio_io::io::read_exact(socket, vec![0; ulen - 8]).and_then(move |(socket, last_bytes)| {
+            //tokio_io::io::read_exact(socket, vec![0; ulen - 8]).and_then(move |(socket, last_bytes)| {
+            let process_last_bytes_future = tokio_io::io::read_exact(socket, vec![0; ulen - 8])
+                .map_err(Into::into)
+                .and_then(move |(socket, last_bytes)|
+            {
                 let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
                 let mut body = last_bytes;
                 body.truncate(ulen - 12);
@@ -145,15 +168,21 @@ impl MtProtoTcpMode for FullModeInfo {
                 value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
                 value = crc32::update(value, &crc32::IEEE_TABLE, &body);
 
-                if value == checksum {
+                let result_future = if value == checksum {
                     futures::future::ok((socket, body))
                 } else {
-                    futures::future::err(io::Error::new(io::ErrorKind::Other, "invalid checksum"))
-                }
-            })
+                    futures::future::err(
+                        //ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum).into())
+                        error::Error::from(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum)))
+                };
+
+                result_future
+            });
+
+            Box::new(process_last_bytes_future)
         });
 
-        Box::new(response.map_err(Into::into))
+        Box::new(response)
     }
 }
 
@@ -170,19 +199,20 @@ impl IntermediateModeInfo {
 }
 
 impl MtProtoTcpMode for IntermediateModeInfo {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
+    fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject
     {
-        let len = serialized_message.len();
-        let data = if len <= 0xff_ff_ff_ff {
-            let mut data = vec![0; 4 + len];
+        let size = tryf!(message.size_hint());
+        let data = if size <= 0xff_ff_ff_ff {
+            let mut buf = vec![0; 4 + size];
 
-            LittleEndian::write_u32(&mut data[0..4], len as u32);
-            data[4..].copy_from_slice(&serialized_message);
+            LittleEndian::write_u32(&mut buf[0..4], size as u32);  // cast is safe here
+            tryf!(serde_mtproto::to_writer(&mut buf[4..], &message));
 
-            data
+            buf
         } else {
-            bailf!(ErrorKind::MessageTooLong(len));
+            bailf!(ErrorKind::MessageTooLong(size));
         };
 
         let init: Box<Future<Item = (TcpStream, &'static [u8]), Error = io::Error>> = if self.is_first_request {
@@ -220,27 +250,43 @@ impl AbridgedModeInfo {
 }
 
 impl MtProtoTcpMode for AbridgedModeInfo {
-    fn request(&mut self, socket: TcpStream, serialized_message: Vec<u8>)
+    fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject
     {
-        let mut data = if self.is_first_request {
-            self.is_first_request = false;
-            vec![0xef]
-        } else {
-            vec![]
-        };
-
-        let len = serialized_message.len() / 4;
-        if len < 0x7f {
-            data.push(len as u8);
-        } else if len < 0xff_ff_ff {
-            data.push(0x7f);
-            LittleEndian::write_uint(&mut data, len as u64, 3); // FIXME: use safe cast here
-        } else {
-            bailf!(ErrorKind::MessageTooLong(len));
+        let size_div_4 = tryf!(message.size_hint()) / 4;  // div 4 required for abridged mode
+        if size_div_4 > 0xff_ff_ff {
+            bailf!(ErrorKind::MessageTooLong(size_div_4 * 4));
         }
 
-        data.extend(serialized_message);
+        let data = {
+            // For overall efficiency we trade code conciseness for reduced amount of dynamic
+            // allocations since computation redundancy here will likely cost less than overhead of
+            // consecutive allocations.
+            let first_request_offset = if self.is_first_request { 1 } else { 0 };
+            let msg_offset = first_request_offset + if size_div_4 < 0x7f { 1 } else { 4 };
+
+            let mut buf = vec![0; msg_offset + size_div_4 * 4];
+
+            if self.is_first_request {
+                buf[0] = 0xef;
+                self.is_first_request = false;
+            }
+
+            if size_div_4 < 0x7f {
+                buf[first_request_offset] = size_div_4 as u8;
+            } else {
+                let x = first_request_offset;
+                buf[x] = 0x7f;
+                // safe to cast here, x <= 0xff_ff_ff < u64::MAX
+                LittleEndian::write_uint(&mut buf[x+1..x+4], size_div_4 as u64, 3);
+            }
+
+            tryf!(serde_mtproto::to_writer(&mut buf[msg_offset..], &message));
+
+            buf
+        };
+
         let request = tokio_io::io::write_all(socket, data);
 
         let response = request.and_then(|(socket, _request_bytes)| {

@@ -204,7 +204,7 @@ fn ceil_isqrt(x: u64) -> u64 {
     let mut ret = (x as f64).sqrt().trunc() as u64;
     while ret * ret > x { ret -= 1; }
     while ret * ret < x { ret += 1; }
-    debug!("ceil_isqrt({}) == {}", x, ret);
+    trace!("ceil_isqrt({}) == {}", x, ret);
     ret
 }
 
