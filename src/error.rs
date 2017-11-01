@@ -97,5 +97,15 @@ error_chain! {
             display("Invalid CRC32 checksum of a response received via TCP in full mode \
                      (expected {}, found {})", expected, found)
         }
+
+        ErrorCode(code: i32) {
+            description("RPC returned an error code")
+            display("RPC returned a {} error code", code)
+        }
+
+        BadMessage(found_len: usize) {
+            description("Message length is neither 4, nor >= 24 bytes")
+            display("Message length is neither 4, nor >= 24 bytes: {}", found_len)
+        }
     }
 }

@@ -4,16 +4,17 @@ use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
-use futures::{self, Future};
+use futures::{self, Future, IntoFuture};
 use log::LogLevel;
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_core::net::TcpStream;
 use tokio_io;
 
 use tl::TLObject;
 use error::{self, ErrorKind};
-use rpc::Message;
+use rpc::{Message, MessageType, Session};
 
 use super::TCP_SERVER_ADDRS;
 
@@ -45,16 +46,56 @@ impl TcpConnection {
         TcpConnection { mode_info: TcpModeInfo::from(mode), server_addr }
     }
 
-    pub fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
-        where T: fmt::Debug + Serialize + TLObject
+    pub fn request<'session, T, U>(&mut self,
+                                   socket: TcpStream,
+                                   session: &'session Session,
+                                   request_message: Message<T>,
+                                   response_message_type: MessageType)
+        -> Box<Future<Item = (TcpStream, Message<U>), Error = error::Error> + 'session>
+        where T: fmt::Debug + Serialize + TLObject,
+              U: fmt::Debug + DeserializeOwned + TLObject,
     {
-        match self.mode_info {
-            TcpModeInfo::Full(ref mut mode_info)         => mode_info.request(socket, message),
-            TcpModeInfo::Intermediate(ref mut mode_info) => mode_info.request(socket, message),
-            TcpModeInfo::Abridged(ref mut mode_info)     => mode_info.request(socket, message),
-        }
+        let request_future = match self.mode_info {
+            TcpModeInfo::Full(ref mut mode_info)         => mode_info.request(socket, request_message),
+            TcpModeInfo::Intermediate(ref mut mode_info) => mode_info.request(socket, request_message),
+            TcpModeInfo::Abridged(ref mut mode_info)     => mode_info.request(socket, request_message),
+        };
+
+        Box::new(request_future.and_then(move |(socket, response_bytes)| {
+            parse_response::<U>(session, &response_bytes, response_message_type)
+                .into_future()
+                .map(move |msg| (socket, msg))
+        }))
     }
+}
+
+fn parse_response<T>(session: &Session,
+                     response_bytes: &[u8],
+                     message_type: MessageType)
+                    -> error::Result<Message<T>>
+    where T: fmt::Debug + DeserializeOwned
+{
+    debug!("Response bytes: {:?}", response_bytes);
+
+    let len = response_bytes.len();
+
+    if len == 4 { // Must be an error code
+        // Error codes are represented as negative i32
+        let code = LittleEndian::read_i32(response_bytes);
+        bail!(ErrorKind::ErrorCode(-code));
+    } else if len < 24 {
+        bail!(ErrorKind::BadMessage(len));
+    }
+
+    let encrypted_data_len = match message_type {
+        MessageType::PlainText => None,
+        MessageType::Encrypted => Some((len - 24) as u32),
+    };
+
+    let response = session.process_message(&response_bytes, encrypted_data_len)?;
+    debug!("Message received: {:#?}", &response);
+
+    Ok(response)
 }
 
 
