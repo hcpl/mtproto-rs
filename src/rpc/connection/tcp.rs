@@ -46,12 +46,12 @@ impl TcpConnection {
         TcpConnection { mode_info: TcpModeInfo::from(mode), server_addr }
     }
 
-    pub fn request<'session, T, U>(&mut self,
-                                   socket: TcpStream,
-                                   session: &'session Session,
-                                   request_message: Message<T>,
-                                   response_message_type: MessageType)
-        -> Box<Future<Item = (TcpStream, Message<U>), Error = error::Error> + 'session>
+    pub fn request<T, U>(&mut self,
+                         socket: TcpStream,
+                         session: Session,
+                         request_message: Message<T>,
+                         response_message_type: MessageType)
+        -> Box<Future<Item = (TcpStream, Message<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
@@ -62,9 +62,9 @@ impl TcpConnection {
         };
 
         Box::new(request_future.and_then(move |(socket, response_bytes)| {
-            parse_response::<U>(session, &response_bytes, response_message_type)
+            parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (socket, msg))
+                .map(move |msg| (socket, msg, session))
         }))
     }
 }
