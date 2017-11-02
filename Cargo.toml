@@ -41,6 +41,7 @@ dotenv = "0.10"
 env_logger = "0.4"
 pretty_assertions = "0.4"
 test-logger = "0.1"
+void = "1.0"
 
 [profile.dev]
 codegen-units = 16

@@ -13,11 +13,12 @@ extern crate rand;
 extern crate serde;
 extern crate serde_mtproto;
 extern crate tokio_core;
+extern crate void;
 
 
 use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
-use futures::Future;
+use futures::{Future, Stream};
 use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::session::SessionConnection;
 use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS, ConnectionConfig, TcpMode};
@@ -25,6 +26,7 @@ use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
 use tokio_core::reactor::{Core, Handle};
+use void::Void;
 
 
 mod error {
@@ -72,31 +74,12 @@ macro_rules! unpack {
     }
 }
 
-fn tcp_auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = error::Error>> {
+/// Initializes session and combines all authorization steps defined below.
+fn auth(handle: Handle, conn_config: ConnectionConfig) -> Box<Future<Item = (), Error = error::Error>> {
     let app_info = tryf!(fetch_app_info());
     let mut rng = rand::thread_rng();
+
     let session = Session::new(rng.gen(), app_info);
-
-    let remote_addr = TCP_SERVER_ADDRS[0];
-    let conn_config = ConnectionConfig::Tcp(tcp_mode, remote_addr);
-    let session_conn = session.connect(handle, conn_config).map_err(Into::<error::Error>::into);
-
-    let auth_future = session_conn
-        .map(|sconn| (sconn, rng))
-        .and_then(unpack!(auth_step1(session_conn, rng)))
-        .and_then(unpack!(auth_step2(session_conn, response, rng, nonce)))
-        .and_then(unpack!(auth_step3(session_conn, response, rng)));
-
-    Box::new(auth_future)
-}
-
-fn http_auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
-    let app_info = tryf!(fetch_app_info());
-    let mut rng = rand::thread_rng();
-    let session = Session::new(rng.gen(), app_info);
-
-    let remote_addr = HTTP_SERVER_ADDRS[0].clone();
-    let conn_config = ConnectionConfig::Http(remote_addr);
     let session_conn = session.connect(handle, conn_config).map_err(Into::<error::Error>::into);
 
     let auth_future = session_conn
@@ -240,23 +223,38 @@ fn fetch_app_info() -> error::Result<AppInfo> {
 }
 
 
-fn run_collect_results(core: &mut Core) -> Vec<error::Result<()>> {
-    let mut results = vec![];
+fn all_auths(core: &Core) -> Box<Future<Item = (), Error = Void>> {
+    let mut futures: Vec<Box<Future<Item = (), Error = Void>>> = vec![];
 
-    macro_rules! run_auth_future {
+    macro_rules! add_auth_future {
         ($($tt:tt)+) => {
-            let auth_future = $($tt)+;
+            let auth_future = auth(core.handle(), $($tt)+).map(|_| $($tt)+).map_err(|e| ($($tt)+, e));
+            let processed_auth_future = auth_future.then(|result| {
+                let conn_type_text = |conn_config| match conn_config {
+                    ConnectionConfig::Tcp(TcpMode::Abridged, _) => "tcp-abridged",
+                    ConnectionConfig::Tcp(TcpMode::Intermediate, _) => "tcp-intermediate",
+                    ConnectionConfig::Tcp(TcpMode::Full, _) => "tcp-full",
+                    ConnectionConfig::Http(_) => "http",
+                };
 
-            results.push(core.run(auth_future))
+                match result {
+                    Ok(conn_config) => println!("Success ({})", conn_type_text(conn_config)),
+                    Err((conn_config, e)) => println!("{} ({})", e, conn_type_text(conn_config)),
+                }
+
+                Ok(())
+            });
+
+            futures.push(Box::new(processed_auth_future))
         };
     }
 
-    run_auth_future!(tcp_auth(core.handle(), TcpMode::Abridged));
-    run_auth_future!(tcp_auth(core.handle(), TcpMode::Intermediate));
-    run_auth_future!(tcp_auth(core.handle(), TcpMode::Full));
-    run_auth_future!(http_auth(core.handle()));
+    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Abridged,     TCP_SERVER_ADDRS[0]));
+    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Intermediate, TCP_SERVER_ADDRS[0]));
+    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Full,         TCP_SERVER_ADDRS[0]));
+    add_auth_future!(ConnectionConfig::Http(HTTP_SERVER_ADDRS[0].clone()));
 
-    results
+    Box::new(futures::stream::futures_unordered(futures).for_each(|_| Ok(())))
 }
 
 fn run() -> error::Result<()> {
@@ -264,12 +262,8 @@ fn run() -> error::Result<()> {
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 
-    for (i, result) in run_collect_results(&mut core).into_iter().enumerate() {
-        match result {
-            Ok(()) => println!("{}. Success", i + 1),
-            Err(e) => println!("{}. {}", i + 1, e),
-        }
-    }
+    let all_auths_future = all_auths(&core);
+    core.run(all_auths_future).unwrap();  // The error is void
 
     Ok(())
 }
