@@ -58,7 +58,7 @@ impl Connection {
         }))
     }
 
-    pub fn http_default() -> Connection {
-        Connection::Http(HttpConnection::default())
+    pub fn http_default(handle: Handle) -> Connection {
+        Connection::Http(HttpConnection::default_with_handle(handle))
     }
 }

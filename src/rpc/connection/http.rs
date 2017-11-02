@@ -10,6 +10,7 @@ use select::predicate::Name;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
+use tokio_core::reactor::Handle;
 
 use error::{self, ErrorKind};
 use rpc::{Message, MessageType, Session};
@@ -20,36 +21,35 @@ use super::HTTP_SERVER_ADDRS;
 
 #[derive(Debug)]
 pub struct HttpConnection {
+    http_client: HttpClient<HttpConnector>,
     server_addr: hyper::Uri,
 }
 
-impl Default for HttpConnection {
-    fn default() -> HttpConnection {
-        HttpConnection {
-            server_addr: HTTP_SERVER_ADDRS[0].clone(),
-        }
-    }
-}
-
 impl HttpConnection {
-    pub fn new(server_addr: hyper::Uri) -> HttpConnection {
-        HttpConnection { server_addr }
+    pub fn new(handle: Handle, server_addr: hyper::Uri) -> HttpConnection {
+        HttpConnection { http_client: HttpClient::new(&handle), server_addr }
     }
 
-    pub fn request<T, U>(&mut self,
-                         http_client: HttpClient<HttpConnector>,
+    pub fn default_with_handle(handle: Handle) -> HttpConnection {
+        HttpConnection::new(handle, HTTP_SERVER_ADDRS[0].clone())
+    }
+
+    pub fn request<T, U>(self,
                          mut session: Session,
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (HttpClient<HttpConnector>, Option<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (HttpConnection, Option<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
         let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
 
-        let http_request = tryf!(self.create_http_request(request_message));
+        let http_request = tryf!(create_http_request(request_message, &self.server_addr));
         debug!("HTTP request: {:?}", &http_request);
+
+        // Split up parts, to be reassembled afterwards
+        let HttpConnection { http_client, server_addr } = self;
 
         let request_future = http_client
             .request(http_request)
@@ -60,30 +60,14 @@ impl HttpConnection {
         Box::new(request_future.and_then(move |response_bytes| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (http_client, msg.into_body(response_message_type), session))
+                .map(move |msg| {
+                    let conn = HttpConnection { http_client, server_addr };
+
+                    (conn, msg.into_body(response_message_type), session)
+                })
         }))
     }
 
-    fn create_http_request<T>(&mut self, request_message: Message<T>) -> error::Result<HttpRequest>
-        where T: fmt::Debug + Serialize + TLObject
-    {
-        let serialized_message = serde_mtproto::to_bytes(&request_message)?;
-
-        // Here we do mean to unwrap since it should fail if something goes wrong anyway
-        assert_eq!(request_message.size_hint().unwrap(), serialized_message.len());
-
-        let mut request = HttpRequest::new(HttpMethod::Post, self.server_addr.clone());
-
-        {
-            let headers = request.headers_mut();
-            headers.set(header::Connection::keep_alive());
-            headers.set(header::ContentLength(serialized_message.len() as u64));
-        }
-
-        request.set_body(serialized_message);
-
-        Ok(request)
-    }
 }
 
 
@@ -100,6 +84,29 @@ fn create_message<T>(session: &mut Session,
     debug!("Message to send: {:#?}", &message);
 
     Ok(message)
+}
+
+fn create_http_request<T>(request_message: Message<T>,
+                          server_addr: &hyper::Uri)
+                         -> error::Result<HttpRequest>
+    where T: fmt::Debug + Serialize + TLObject
+{
+    let serialized_message = serde_mtproto::to_bytes(&request_message)?;
+
+    // Here we do mean to unwrap since it should fail if something goes wrong anyway
+    assert_eq!(request_message.size_hint().unwrap(), serialized_message.len());
+
+    let mut request = HttpRequest::new(HttpMethod::Post, server_addr.clone());
+
+    {
+        let headers = request.headers_mut();
+        headers.set(header::Connection::keep_alive());
+        headers.set(header::ContentLength(serialized_message.len() as u64));
+    }
+
+    request.set_body(serialized_message);
+
+    Ok(request)
 }
 
 fn parse_response<U>(session: &Session,

@@ -20,8 +20,6 @@ use std::str;
 use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
 use futures::Future;
-use hyper::Client as HttpClient;
-use hyper::client::HttpConnector;
 use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, HttpConnection};
 use mtproto::rpc::encryption::asymm;
@@ -81,26 +79,23 @@ fn auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
     let session = Session::new(rng.gen(), app_info);
 
     let remote_addr = HTTP_SERVER_ADDRS[0].clone();
-    let conn = HttpConnection::new(remote_addr);
-    let http_client = hyper::Client::new(&handle);
+    let conn = HttpConnection::new(handle, remote_addr);
 
-    let auth_future = auth_step1(http_client, session, rng, conn)
-        .and_then(unpack!(auth_step2(http_client, response, session, rng, conn, nonce)))
-        .and_then(unpack!(auth_step3(http_client, response, session, rng, conn)));
+    let auth_future = auth_step1(conn, session, rng)
+        .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
+        .and_then(unpack!(auth_step3(conn, response, session, rng)));
 
     Box::new(auth_future)
 }
 
-fn auth_step1(http_client: HttpClient<HttpConnector>,
+fn auth_step1(conn: HttpConnection,
               session: Session,
-              mut rng: ThreadRng,
-              mut conn: HttpConnection)
+              mut rng: ThreadRng)
     -> Box<Future<Item = (
-           HttpClient<HttpConnector>,
+           HttpConnection,
            schema::ResPQ,
            Session,
            ThreadRng,
-           HttpConnection,
            i128::i128,
        ), Error = error::Error>>
 {
@@ -109,23 +104,21 @@ fn auth_step1(http_client: HttpClient<HttpConnector>,
         nonce: nonce,
     };
 
-    let request = conn.request(http_client, session, req_pq, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request(session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng, conn, nonce)).map_err(Into::into))
+    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng, nonce)).map_err(Into::into))
 }
 
-fn auth_step2(http_client: HttpClient<HttpConnector>,
+fn auth_step2(conn: HttpConnection,
               response: schema::ResPQ,
               session: Session,
               mut rng: ThreadRng,
-              mut conn: HttpConnection,
               nonce: i128::i128)
     -> Box<Future<Item = (
-           HttpClient<HttpConnector>,
+           HttpConnection,
            schema::Server_DH_Params,
            Session,
            ThreadRng,
-           HttpConnection,
        ), Error = error::Error>>
 {
     let res_pq = response;
@@ -189,16 +182,15 @@ fn auth_step2(http_client: HttpClient<HttpConnector>,
         //encrypted_data: encrypted_data2.into(),
     };
 
-    let request = conn.request(http_client, session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request(session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(|(c, d, session)| (c, d.unwrap(), session, rng, conn)).map_err(Into::into))
+    Box::new(request.map(|(c, d, session)| (c, d.unwrap(), session, rng)).map_err(Into::into))
 }
 
-fn auth_step3(_http_client: HttpClient<HttpConnector>,
+fn auth_step3(_conn: HttpConnection,
               _response: schema::Server_DH_Params,
               _session: Session,
-              _rng: ThreadRng,
-              _conn: HttpConnection)
+              _rng: ThreadRng)
     -> Box<Future<Item = (), Error = error::Error>>
 {
     Box::new(futures::future::ok(()))
