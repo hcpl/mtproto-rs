@@ -15,13 +15,12 @@ extern crate serde_mtproto;
 extern crate tokio_core;
 
 
-use std::str;
-
 use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
 use futures::Future;
 use mtproto::rpc::{AppInfo, MessageType, Session};
-use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, HttpConnection};
+use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS,
+                               Connection, HttpConnection, TcpConnection, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
@@ -73,13 +72,35 @@ macro_rules! unpack {
     }
 }
 
-fn auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
+fn tcp_auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = error::Error>> {
+    let app_info = tryf!(fetch_app_info());
+    let mut rng = rand::thread_rng();
+    let session = Session::new(rng.gen(), app_info);
+
+    let remote_addr = TCP_SERVER_ADDRS[0];
+    // TODO: replace with session::connect
+    let conn = TcpConnection::new(handle, tcp_mode, remote_addr)
+        .map(|tcp_conn| Connection::Tcp(tcp_conn))
+        .map_err(Into::into);
+
+    let auth_future = conn
+        .map(|conn| (conn, session, rng))
+        .and_then(unpack!(auth_step1(conn, session, rng)))
+        .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
+        .and_then(unpack!(auth_step3(conn, response, session, rng)));
+
+    Box::new(auth_future)
+}
+
+fn http_auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
     let app_info = tryf!(fetch_app_info());
     let mut rng = rand::thread_rng();
     let session = Session::new(rng.gen(), app_info);
 
     let remote_addr = HTTP_SERVER_ADDRS[0].clone();
-    let conn = HttpConnection::new(handle, remote_addr);
+    // TODO: replace with session::connect
+    let http_conn = HttpConnection::new(handle, remote_addr);
+    let conn = Connection::Http(http_conn);
 
     let auth_future = auth_step1(conn, session, rng)
         .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
@@ -88,11 +109,12 @@ fn auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
     Box::new(auth_future)
 }
 
-fn auth_step1(conn: HttpConnection,
+
+fn auth_step1(conn: Connection,
               session: Session,
               mut rng: ThreadRng)
     -> Box<Future<Item = (
-           HttpConnection,
+           Connection,
            schema::ResPQ,
            Session,
            ThreadRng,
@@ -106,16 +128,18 @@ fn auth_step1(conn: HttpConnection,
 
     let request = conn.request(session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng, nonce)).map_err(Into::into))
+    Box::new(request.map(move |(conn, response, session)| {
+        (conn, response.unwrap(), session, rng, nonce)
+    }).map_err(Into::into))
 }
 
-fn auth_step2(conn: HttpConnection,
+fn auth_step2(conn: Connection,
               response: schema::ResPQ,
               session: Session,
               mut rng: ThreadRng,
               nonce: i128::i128)
     -> Box<Future<Item = (
-           HttpConnection,
+           Connection,
            schema::Server_DH_Params,
            Session,
            ThreadRng,
@@ -184,10 +208,12 @@ fn auth_step2(conn: HttpConnection,
 
     let request = conn.request(session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(|(c, d, session)| (c, d.unwrap(), session, rng)).map_err(Into::into))
+    Box::new(request.map(move |(conn, response, session)| {
+        (conn, response.unwrap(), session, rng)
+    }).map_err(Into::into))
 }
 
-fn auth_step3(_conn: HttpConnection,
+fn auth_step3(_conn: Connection,
               _response: schema::Server_DH_Params,
               _session: Session,
               _rng: ThreadRng)
@@ -214,13 +240,35 @@ fn fetch_app_info() -> error::Result<AppInfo> {
 }
 
 
+fn run_collect_errors(core: &mut Core) -> Vec<error::Error> {
+    let mut errors = vec![];
+
+    macro_rules! run_auth_future {
+        ($($tt:tt)+) => {
+            let auth_future = $($tt)+;
+
+            if let Err(e) = core.run(auth_future) {
+                errors.push(e);
+            }
+        };
+    }
+
+    run_auth_future!(tcp_auth(core.handle(), TcpMode::Abridged));
+    run_auth_future!(tcp_auth(core.handle(), TcpMode::Intermediate));
+    run_auth_future!(tcp_auth(core.handle(), TcpMode::Full));
+    run_auth_future!(http_auth(core.handle()));
+
+    errors
+}
+
 fn run() -> error::Result<()> {
     env_logger::init()?;
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 
-    let auth_future = auth(core.handle());
-    core.run(auth_future)?;
+    for (i, e) in run_collect_errors(&mut core).into_iter().enumerate() {
+        println!("{}. {}", i + 1, e);
+    }
 
     Ok(())
 }

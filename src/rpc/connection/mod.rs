@@ -1,10 +1,15 @@
+use std::fmt;
 use std::net::SocketAddr;
 
 use hyper;
 use futures::Future;
+use serde::de::DeserializeOwned;
+use serde::ser::Serialize;
 use tokio_core::reactor::Handle;
 
 use error;
+use rpc::{MessageType, Session};
+use tl::TLObject;
 
 
 /// Helper macros for use in `tcp` and `http` modules
@@ -60,5 +65,26 @@ impl Connection {
 
     pub fn http_default(handle: Handle) -> Connection {
         Connection::Http(HttpConnection::default_with_handle(handle))
+    }
+
+    pub fn request<T, U>(self,
+                         session: Session,
+                         request_data: T,
+                         request_message_type: MessageType,
+                         response_message_type: MessageType)
+                        -> Box<Future<Item = (Connection, Option<U>, Session), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject,
+              U: fmt::Debug + DeserializeOwned + TLObject,
+    {
+        match self {
+            Connection::Tcp(conn) => {
+                Box::new(conn.request(session, request_data, request_message_type, response_message_type)
+                    .map(|(tcp_conn, response, session)| (Connection::Tcp(tcp_conn), response, session)))
+            },
+            Connection::Http(conn) => {
+                Box::new(conn.request(session, request_data, request_message_type, response_message_type)
+                    .map(|(http_conn, response, session)| (Connection::Http(http_conn), response, session)))
+            },
+        }
     }
 }
