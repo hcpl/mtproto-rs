@@ -52,11 +52,11 @@ impl HttpConnection {
     }
 
     pub fn request<T, U>(&mut self,
-                         http_client: &HttpClient<HttpConnector>,
+                         http_client: HttpClient<HttpConnector>,
                          session: Session,
                          request_message: Message<T>,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (Message<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (HttpClient<HttpConnector>, Message<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
@@ -72,7 +72,7 @@ impl HttpConnection {
         Box::new(request_future.and_then(move |response_bytes| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (msg, session))
+                .map(move |msg| (http_client, msg, session))
         }))
     }
 

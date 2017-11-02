@@ -12,7 +12,6 @@ extern crate rand;
 extern crate serde;
 extern crate serde_mtproto;
 extern crate tokio_core;
-extern crate tokio_io;
 
 
 use std::fmt;
