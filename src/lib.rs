@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "128"]
+#![recursion_limit = "160"]
 
 extern crate byteorder;
 extern crate chrono;

@@ -39,7 +39,7 @@ impl HttpConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (HttpConnection, Option<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (HttpConnection, U, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
@@ -60,10 +60,15 @@ impl HttpConnection {
         Box::new(request_future.and_then(move |response_bytes| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| {
+                .and_then(move |msg| {
                     let conn = HttpConnection { http_client, server_addr };
+                    let msg_type = msg.message_type();
 
-                    (conn, msg.into_body(response_message_type), session)
+                    msg.into_body(response_message_type)
+                        .map(|msg| (conn, msg, session))
+                        .ok_or(ErrorKind::ResponseMessageTypeMismatch(response_message_type, msg_type))
+                        .map_err(Into::into)
+                        .into_future()
                 })
         }))
     }

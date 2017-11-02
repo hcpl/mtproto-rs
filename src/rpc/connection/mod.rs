@@ -72,7 +72,7 @@ impl Connection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-                        -> Box<Future<Item = (Connection, Option<U>, Session), Error = error::Error>>
+                        -> Box<Future<Item = (Connection, U, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {

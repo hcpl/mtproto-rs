@@ -129,7 +129,7 @@ fn auth_step1(conn: Connection,
     let request = conn.request(session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
     Box::new(request.map(move |(conn, response, session)| {
-        (conn, response.unwrap(), session, rng, nonce)
+        (conn, response, session, rng, nonce)
     }).map_err(Into::into))
 }
 
@@ -209,7 +209,7 @@ fn auth_step2(conn: Connection,
     let request = conn.request(session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
     Box::new(request.map(move |(conn, response, session)| {
-        (conn, response.unwrap(), session, rng)
+        (conn, response, session, rng)
     }).map_err(Into::into))
 }
 

@@ -98,6 +98,14 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
 
 
 impl<T: Identifiable + MtProtoSized> Message<T> {
+    /// Get the message type of this message.
+    pub fn message_type(&self) -> MessageType {
+        match *self {
+            Message::PlainText { .. } => MessageType::PlainText,
+            Message::Decrypted { .. } => MessageType::Encrypted,
+        }
+    }
+
     /// Unwrap the body of the message.
     ///
     /// Returns `Some(body)` if the message type parameter matches the type of this message.

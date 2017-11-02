@@ -124,5 +124,10 @@ error_chain! {
             description("Unknown HTML error structure")
             display("Unknown HTML error structure:\n{}", html)
         }
+
+        ResponseMessageTypeMismatch(expected: ::rpc::MessageType, found: ::rpc::MessageType) {
+            description("Response message type mismatch")
+            display("Response message type mismatch: (expected {:?}, found {:?})", expected, found)
+        }
     }
 }
