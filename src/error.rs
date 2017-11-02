@@ -8,9 +8,11 @@ error_chain! {
     foreign_links {
         Envy(::envy::Error);
         FromUtf8(::std::string::FromUtf8Error);
+        Hyper(::hyper::Error);
         Io(::std::io::Error);
         OpenSsl(::openssl::error::ErrorStack);
         TomlDeserialize(::toml::de::Error);
+        Utf8(::std::str::Utf8Error);
     }
 
     errors {
@@ -98,14 +100,29 @@ error_chain! {
                      (expected {}, found {})", expected, found)
         }
 
-        ErrorCode(code: i32) {
+        TcpErrorCode(code: i32) {
             description("RPC returned an error code")
             display("RPC returned a {} error code", code)
         }
 
-        BadMessage(found_len: usize) {
+        BadTcpMessage(found_len: usize) {
             description("Message length is neither 4, nor >= 24 bytes")
             display("Message length is neither 4, nor >= 24 bytes: {}", found_len)
+        }
+
+        HtmlErrorText(error_text: String) {
+            description("RPC returned an HTML error")
+            display("RPC returned an HTML error with text: {}", error_text)
+        }
+
+        BadHtmlMessage(found_len: usize) {
+            description("Message is not HTML error and is < 24 bytes long")
+            display("Message is not HTML error and is {} < 24 bytes long", found_len)
+        }
+
+        UnknownHtmlErrorStructure(html: String) {
+            description("Unknown HTML error structure")
+            display("Unknown HTML error structure:\n{}", html)
         }
     }
 }

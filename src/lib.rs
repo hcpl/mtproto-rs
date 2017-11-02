@@ -18,6 +18,7 @@ extern crate log;
 extern crate num_traits;
 extern crate openssl;
 extern crate rand;
+extern crate select;
 extern crate serde;
 extern crate serde_bytes;
 #[macro_use]

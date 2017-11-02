@@ -12,9 +12,9 @@ use serde_mtproto::{self, MtProtoSized};
 use tokio_core::net::TcpStream;
 use tokio_io;
 
-use tl::TLObject;
 use error::{self, ErrorKind};
 use rpc::{Message, MessageType, Session};
+use tl::TLObject;
 
 use super::TCP_SERVER_ADDRS;
 
@@ -69,11 +69,11 @@ impl TcpConnection {
     }
 }
 
-fn parse_response<T>(session: &Session,
+fn parse_response<U>(session: &Session,
                      response_bytes: &[u8],
                      message_type: MessageType)
-                    -> error::Result<Message<T>>
-    where T: fmt::Debug + DeserializeOwned
+                    -> error::Result<Message<U>>
+    where U: fmt::Debug + DeserializeOwned
 {
     debug!("Response bytes: {:?}", response_bytes);
 
@@ -82,9 +82,9 @@ fn parse_response<T>(session: &Session,
     if len == 4 { // Must be an error code
         // Error codes are represented as negative i32
         let code = LittleEndian::read_i32(response_bytes);
-        bail!(ErrorKind::ErrorCode(-code));
+        bail!(ErrorKind::TcpErrorCode(-code));
     } else if len < 24 {
-        bail!(ErrorKind::BadMessage(len));
+        bail!(ErrorKind::BadTcpMessage(len));
     }
 
     let encrypted_data_len = match message_type {
