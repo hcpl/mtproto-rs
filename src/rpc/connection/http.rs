@@ -7,8 +7,8 @@ use hyper::client::HttpConnector;
 use hyper::header;
 use select::document::Document;
 use select::predicate::Name;
-use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
+use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 
 use error::{self, ErrorKind};
@@ -16,22 +16,6 @@ use rpc::{Message, MessageType, Session};
 use tl::TLObject;
 
 use super::HTTP_SERVER_ADDRS;
-
-
-macro_rules! bailf {
-    ($e:expr) => {
-        return Box::new(futures::future::err($e.into()))
-    }
-}
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match { $e } {
-            Ok(v) => v,
-            Err(e) => bailf!(e),
-        }
-    }
-}
 
 
 #[derive(Debug)]

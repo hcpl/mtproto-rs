@@ -19,25 +19,9 @@ use tl::TLObject;
 use super::TCP_SERVER_ADDRS;
 
 
-macro_rules! bailf {
-    ($e:expr) => {
-        return Box::new(futures::future::err($e.into()))
-    }
-}
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match { $e } {
-            Ok(v) => v,
-            Err(e) => bailf!(e),
-        }
-    }
-}
-
-
 #[derive(Debug)]
 pub struct TcpConnection {
-    mode_info: TcpModeInfo,
+    mode_handler: TcpModeHandler,
     server_addr: SocketAddr,
 }
 
@@ -59,7 +43,7 @@ impl TcpConnection {
             info!("New TCP connection in {} mode to {}", mode_str, server_addr);
         }
 
-        TcpConnection { mode_info: TcpModeInfo::from(mode), server_addr }
+        TcpConnection { mode_handler: TcpModeHandler::from(mode), server_addr }
     }
 
     pub fn request<T, U>(&mut self,
@@ -74,10 +58,14 @@ impl TcpConnection {
     {
         let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
 
-        let request_future = match self.mode_info {
-            TcpModeInfo::Full(ref mut mode_info)         => mode_info.request(socket, request_message),
-            TcpModeInfo::Intermediate(ref mut mode_info) => mode_info.request(socket, request_message),
-            TcpModeInfo::Abridged(ref mut mode_info)     => mode_info.request(socket, request_message),
+        let request_future = {
+            use self::TcpModeHandler::*;
+
+            match self.mode_handler {
+                Full(ref mut mode_handler)         => mode_handler.request(socket, request_message),
+                Intermediate(ref mut mode_handler) => mode_handler.request(socket, request_message),
+                Abridged(ref mut mode_handler)     => mode_handler.request(socket, request_message),
+            }
         };
 
         Box::new(request_future.and_then(move |(socket, response_bytes)| {
@@ -140,18 +128,18 @@ pub enum TcpMode {
 }
 
 #[derive(Debug)]
-enum TcpModeInfo {
-    Full(FullModeInfo),
-    Intermediate(IntermediateModeInfo),
-    Abridged(AbridgedModeInfo),
+enum TcpModeHandler {
+    Full(FullModeHandler),
+    Intermediate(IntermediateModeHandler),
+    Abridged(AbridgedModeHandler),
 }
 
-impl From<TcpMode> for TcpModeInfo {
-    fn from(mode: TcpMode) -> TcpModeInfo {
+impl From<TcpMode> for TcpModeHandler {
+    fn from(mode: TcpMode) -> TcpModeHandler {
         match mode {
-            TcpMode::Full         => TcpModeInfo::Full(FullModeInfo::new()),
-            TcpMode::Intermediate => TcpModeInfo::Intermediate(IntermediateModeInfo::new()),
-            TcpMode::Abridged     => TcpModeInfo::Abridged(AbridgedModeInfo::new()),
+            TcpMode::Full         => TcpModeHandler::Full(FullModeHandler::new()),
+            TcpMode::Intermediate => TcpModeHandler::Intermediate(IntermediateModeHandler::new()),
+            TcpMode::Abridged     => TcpModeHandler::Abridged(AbridgedModeHandler::new()),
         }
     }
 }
@@ -165,17 +153,17 @@ trait MtProtoTcpMode {
 
 
 #[derive(Debug)]
-struct FullModeInfo {
+struct FullModeHandler {
     sent_counter: u32,
 }
 
-impl FullModeInfo {
-    fn new() -> FullModeInfo {
-        FullModeInfo { sent_counter: 0 }
+impl FullModeHandler {
+    fn new() -> FullModeHandler {
+        FullModeHandler { sent_counter: 0 }
     }
 }
 
-impl MtProtoTcpMode for FullModeInfo {
+impl MtProtoTcpMode for FullModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject
@@ -246,17 +234,17 @@ impl MtProtoTcpMode for FullModeInfo {
 
 
 #[derive(Debug)]
-struct IntermediateModeInfo {
+struct IntermediateModeHandler {
     is_first_request: bool,
 }
 
-impl IntermediateModeInfo {
-    fn new() -> IntermediateModeInfo {
-        IntermediateModeInfo { is_first_request: true }
+impl IntermediateModeHandler {
+    fn new() -> IntermediateModeHandler {
+        IntermediateModeHandler { is_first_request: true }
     }
 }
 
-impl MtProtoTcpMode for IntermediateModeInfo {
+impl MtProtoTcpMode for IntermediateModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject
@@ -297,17 +285,17 @@ impl MtProtoTcpMode for IntermediateModeInfo {
 
 
 #[derive(Debug)]
-struct AbridgedModeInfo {
+struct AbridgedModeHandler {
     is_first_request: bool,
 }
 
-impl AbridgedModeInfo {
-    fn new() -> AbridgedModeInfo {
-        AbridgedModeInfo { is_first_request: true }
+impl AbridgedModeHandler {
+    fn new() -> AbridgedModeHandler {
+        AbridgedModeHandler { is_first_request: true }
     }
 }
 
-impl MtProtoTcpMode for AbridgedModeInfo {
+impl MtProtoTcpMode for AbridgedModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject

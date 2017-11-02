@@ -98,42 +98,6 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
 
 
 impl<T: Identifiable + MtProtoSized> Message<T> {
-    /// Returns `Some(body)` if the message was plain-text.
-    /// Otherwise returns `None`.
-    pub fn into_plain_text_body(self) -> Option<T> {
-        match self {
-            Message::PlainText { body, .. } => Some(body.into_inner().into_inner()),
-            Message::Decrypted { .. } => None,
-        }
-    }
-
-    /// Unwraps the body of the plain-text message.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the message was encrypted.
-    pub fn unwrap_plain_text_body(self) -> T {
-        self.into_plain_text_body().expect("`Message::PlainText` variant")
-    }
-
-    /// Returns `Some(body)` if the message was encrypted.
-    /// Otherwise returns `None`.
-    pub fn into_decrypted_body(self) -> Option<T> {
-        match self {
-            Message::PlainText { .. } => None,
-            Message::Decrypted { decrypted_data } => Some(decrypted_data.body.into_inner().into_inner()),
-        }
-    }
-
-    /// Unwraps the body of the encrypted message.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the message was plain-text.
-    pub fn unwrap_decrypted_body(self) -> T {
-        self.into_decrypted_body().expect("`Message::Decrypted` variant")
-    }
-
     /// Unwrap the body of the message.
     ///
     /// Returns `Some(body)` if the message type parameter matches the type of this message.

@@ -1,10 +1,26 @@
-pub mod tcp;
-pub mod http;
-
-
 use std::net::SocketAddr;
 
 use hyper;
+
+
+/// Helper macros for use in `tcp` and `http` modules
+macro_rules! bailf {
+    ($e:expr) => {
+        return Box::new(futures::future::err($e.into()))
+    }
+}
+
+macro_rules! tryf {
+    ($e:expr) => {
+        match { $e } {
+            Ok(v) => v,
+            Err(e) => bailf!(e),
+        }
+    }
+}
+
+pub mod tcp;
+pub mod http;
 
 pub use self::tcp::{TcpConnection, TcpMode};
 pub use self::http::HttpConnection;
