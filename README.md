@@ -48,6 +48,8 @@ Based on [tokio](https://tokio.rs) and [hyper](https://hyper.rs).
 $ cargo run --example auth
 # For verbose output use
 $ RUST_LOG=auth=info cargo run --example auth
+# Even more verbose
+$ RUST_LOG=auth=debug cargo run --example auth
 ```
 
 ### `dynamic`

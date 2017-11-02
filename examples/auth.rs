@@ -107,6 +107,7 @@ fn auth_step1(session_conn: SessionConnection,
         nonce: nonce,
     };
 
+    info!("Sending PQ request: {:#?}", req_pq);
     let request = session_conn.request(req_pq, MessageType::PlainText, MessageType::PlainText);
 
     Box::new(request.map(move |(session_conn, response)| {
@@ -116,7 +117,7 @@ fn auth_step1(session_conn: SessionConnection,
 
 /// Step 2: Presenting PQ proof of work & server authentication
 fn auth_step2(session: SessionConnection,
-              response: schema::ResPQ,
+              res_pq: schema::ResPQ,
               mut rng: ThreadRng,
               nonce: i128::i128)
     -> Box<Future<Item = (
@@ -125,16 +126,16 @@ fn auth_step2(session: SessionConnection,
            ThreadRng,
        ), Error = error::Error>>
 {
-    let res_pq = response;
+    info!("Received PQ response: {:#?}", res_pq);
 
     if nonce != res_pq.nonce {
         bailf!(ErrorKind::NonceMismatch(nonce, res_pq.nonce));
     }
 
     let pq_u64 = BigEndian::read_u64(&res_pq.pq);
-    info!("Decomposing pq = {}...", pq_u64);
+    debug!("Decomposing pq = {}...", pq_u64);
     let (p_u32, q_u32) = tryf!(asymm::decompose_pq(pq_u64));
-    info!("Decomposed p = {}, q = {}", p_u32, q_u32);
+    debug!("Decomposed p = {}, q = {}", p_u32, q_u32);
     let u32_to_vec = |num| {
         let mut v = vec![0; 4];
         BigEndian::write_u32(v.as_mut_slice(), num);
@@ -151,30 +152,30 @@ fn auth_step2(session: SessionConnection,
         server_nonce: res_pq.server_nonce,
         new_nonce: rng.gen(),
     });
+    info!("PQ proof of work to be sent: {:#?}", &p_q_inner_data);
 
-    info!("Data to send: {:#?}", &p_q_inner_data);
     let p_q_inner_data_serialized = tryf!(serde_mtproto::to_bytes(&p_q_inner_data));
-    info!("Data bytes to send: {:?}", &p_q_inner_data_serialized);
+    debug!("Data bytes to send: {:?}", &p_q_inner_data_serialized);
     let known_sha1_fingerprints = tryf!(asymm::KNOWN_RAW_KEYS.iter()
         .map(|raw_key| {
             let sha1_fingerprint = raw_key.read()?.sha1_fingerprint()?;
             Ok(sha1_fingerprint.iter().map(|b| format!("{:02x}", b)).collect::<String>())
         })
         .collect::<error::Result<Vec<_>>>());
-    info!("Known public key SHA1 fingerprints: {:?}", known_sha1_fingerprints);
+    debug!("Known public key SHA1 fingerprints: {:?}", known_sha1_fingerprints);
     let known_fingerprints = tryf!(asymm::KNOWN_RAW_KEYS.iter()
         .map(|raw_key| Ok(raw_key.read()?.fingerprint()?))
         .collect::<error::Result<Vec<_>>>());
-    info!("Known public key fingerprints: {:?}", known_fingerprints);
+    debug!("Known public key fingerprints: {:?}", known_fingerprints);
     let server_pk_fingerprints = res_pq.server_public_key_fingerprints.inner().as_slice();
-    info!("Server public key fingerprints: {:?}", &server_pk_fingerprints);
+    debug!("Server public key fingerprints: {:?}", &server_pk_fingerprints);
     let (rsa_public_key, fingerprint) =
         tryf!(asymm::find_first_key_fail_safe(server_pk_fingerprints));
-    info!("RSA public key used: {:#?}", &rsa_public_key);
+    debug!("RSA public key used: {:#?}", &rsa_public_key);
     let encrypted_data = tryf!(rsa_public_key.encrypt(&p_q_inner_data_serialized));
-    info!("Encrypted data: {:?}", encrypted_data.as_ref());
+    debug!("Encrypted data: {:?}", encrypted_data.as_ref());
     let encrypted_data2 = tryf!(rsa_public_key.encrypt2(&p_q_inner_data_serialized));
-    info!("Encrypted data 2: {:?}", &encrypted_data2);
+    debug!("Encrypted data 2: {:?}", &encrypted_data2);
 
     let req_dh_params = schema::rpc::req_DH_params {
         nonce: res_pq.nonce,
@@ -186,6 +187,7 @@ fn auth_step2(session: SessionConnection,
         //encrypted_data: encrypted_data2.into(),
     };
 
+    info!("Sending DH key exchange request: {:?}", req_dh_params);
     let request = session.request(req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
     Box::new(request.map(move |(session, response)| {
@@ -198,10 +200,12 @@ fn auth_step2(session: SessionConnection,
 /// Should be this but step 2 in this implementation always ends with
 /// 404 Not Found, so this is left empty for investigations.
 fn auth_step3(_session: SessionConnection,
-              _response: schema::Server_DH_Params,
+              server_dh_params: schema::Server_DH_Params,
               _rng: ThreadRng)
     -> Box<Future<Item = (), Error = error::Error>>
 {
+    info!("Received server DH parameters: {:#?}", server_dh_params);
+
     Box::new(futures::future::ok(()))
 }
 

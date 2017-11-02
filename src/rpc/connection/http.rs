@@ -27,6 +27,7 @@ pub struct HttpConnection {
 
 impl HttpConnection {
     pub fn new(handle: Handle, server_addr: hyper::Uri) -> HttpConnection {
+        info!("New HTTP connection to {}", &server_addr);
         HttpConnection { http_client: HttpClient::new(&handle), server_addr }
     }
 
