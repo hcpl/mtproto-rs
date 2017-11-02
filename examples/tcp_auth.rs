@@ -14,13 +14,10 @@ extern crate serde_mtproto;
 extern crate tokio_core;
 
 
-use std::fmt;
-
 use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
 use futures::Future;
-use mtproto::tl::dynamic::TLObject;
-use mtproto::rpc::{AppInfo, Message, MessageType, Session};
+use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::connection::{TCP_SERVER_ADDRS, TcpConnection, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
@@ -48,8 +45,8 @@ mod error {
             }
 
             ErrorsCollection(errors: Vec<Error>) {
-                description("Collection of errors of this type")
-                display("Collection of errors of this type: {:?}", errors)
+                description("Collection of errors")
+                display("Collection of errors: {:?}", errors)
             }
         }
     }
@@ -98,12 +95,12 @@ fn auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = erro
 }
 
 fn auth_step1(socket: TcpStream,
-              mut session: Session,
+              session: Session,
               mut rng: ThreadRng,
               mut conn: TcpConnection)
     -> Box<Future<Item = (
            TcpStream,
-           Message<schema::ResPQ>,
+           schema::ResPQ,
            Session,
            ThreadRng,
            TcpConnection,
@@ -115,27 +112,26 @@ fn auth_step1(socket: TcpStream,
         nonce: nonce,
     };
 
-    let message = tryf!(create_message(&mut session, req_pq, MessageType::PlainText));
-    let request = conn.request(socket, session, message, MessageType::PlainText);
+    let request = conn.request(socket, session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(s, m, session)| (s, m, session, rng, conn, nonce)).map_err(Into::into))
+    Box::new(request.map(move |(s, d, session)| (s, d.unwrap(), session, rng, conn, nonce)).map_err(Into::into))
 }
 
 fn auth_step2(socket: TcpStream,
-              response: Message<schema::ResPQ>,
-              mut session: Session,
+              response: schema::ResPQ,
+              session: Session,
               mut rng: ThreadRng,
               mut conn: TcpConnection,
               nonce: i128::i128)
     -> Box<Future<Item = (
            TcpStream,
-           Message<schema::Server_DH_Params>,
+           schema::Server_DH_Params,
            Session,
            ThreadRng,
            TcpConnection,
        ), Error = error::Error>>
 {
-    let res_pq = response.unwrap_plain_text_body();
+    let res_pq = response;
 
     if nonce != res_pq.nonce {
         bailf!(ErrorKind::NonceMismatch(nonce, res_pq.nonce));
@@ -195,14 +191,13 @@ fn auth_step2(socket: TcpStream,
         encrypted_data: encrypted_data.to_vec().into(),
     };
 
-    let message = tryf!(create_message(&mut session, req_dh_params, MessageType::PlainText));
-    let request = conn.request(socket, session, message, MessageType::PlainText);
+    let request = conn.request(socket, session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(s, m, session)| (s, m, session, rng, conn)).map_err(Into::into))
+    Box::new(request.map(move |(s, d, session)| (s, d.unwrap(), session, rng, conn)).map_err(Into::into))
 }
 
 fn auth_step3(_socket: TcpStream,
-              _response: Message<schema::Server_DH_Params>,
+              _response: schema::Server_DH_Params,
               _session: Session,
               _rng: ThreadRng,
               _conn: TcpConnection)
@@ -226,21 +221,6 @@ fn fetch_app_info() -> error::Result<AppInfo> {
         "this example needs either both `MTPROTO_API_ID` and `MTPROTO_API_HASH` environment \
          variables set, or an AppInfo.toml file with `api_id` and `api_hash` fields in it"
     })
-}
-
-fn create_message<T>(session: &mut Session,
-                     data: T,
-                     message_type: MessageType)
-                    -> error::Result<Message<T>>
-    where T: fmt::Debug + TLObject
-{
-    let message = match message_type {
-        MessageType::PlainText => session.create_plain_text_message(data)?,
-        MessageType::Encrypted => session.create_encrypted_message_no_acks(data)?.unwrap(),
-    };
-    info!("Message to send: {:#?}", &message);
-
-    Ok(message)
 }
 
 

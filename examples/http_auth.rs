@@ -22,7 +22,7 @@ use extprim::i128;
 use futures::Future;
 use hyper::Client as HttpClient;
 use hyper::client::HttpConnector;
-use mtproto::rpc::{AppInfo, Message, MessageType, Session};
+use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, HttpConnection};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
@@ -97,7 +97,7 @@ fn auth_step1(http_client: HttpClient<HttpConnector>,
               mut conn: HttpConnection)
     -> Box<Future<Item = (
            HttpClient<HttpConnector>,
-           Message<schema::ResPQ>,
+           schema::ResPQ,
            Session,
            ThreadRng,
            HttpConnection,
@@ -109,27 +109,26 @@ fn auth_step1(http_client: HttpClient<HttpConnector>,
         nonce: nonce,
     };
 
-    let message = tryf!(session.create_plain_text_message(req_pq));
-    let request = conn.request(http_client, session, message, MessageType::PlainText);
+    let request = conn.request(http_client, session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(c, m, session)| (c, m, session, rng, conn, nonce)).map_err(Into::into))
+    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng, conn, nonce)).map_err(Into::into))
 }
 
 fn auth_step2(http_client: HttpClient<HttpConnector>,
-              response: Message<schema::ResPQ>,
+              response: schema::ResPQ,
               session: Session,
               mut rng: ThreadRng,
               mut conn: HttpConnection,
               nonce: i128::i128)
     -> Box<Future<Item = (
            HttpClient<HttpConnector>,
-           Message<schema::Server_DH_Params>,
+           schema::Server_DH_Params,
            Session,
            ThreadRng,
            HttpConnection,
        ), Error = error::Error>>
 {
-    let res_pq = response.unwrap_plain_text_body();
+    let res_pq = response;
 
     if nonce != res_pq.nonce {
         bailf!(ErrorKind::NonceMismatch(nonce, res_pq.nonce));
@@ -190,14 +189,13 @@ fn auth_step2(http_client: HttpClient<HttpConnector>,
         //encrypted_data: encrypted_data2.into(),
     };
 
-    let message = tryf!(session.create_plain_text_message(req_dh_params));
-    let request = conn.request(http_client, session, message, MessageType::PlainText);
+    let request = conn.request(http_client, session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(|(c, m, session)| (c, m, session, rng, conn)).map_err(Into::into))
+    Box::new(request.map(|(c, d, session)| (c, d.unwrap(), session, rng, conn)).map_err(Into::into))
 }
 
 fn auth_step3(_http_client: HttpClient<HttpConnector>,
-              _response: Message<schema::Server_DH_Params>,
+              _response: schema::Server_DH_Params,
               _session: Session,
               _rng: ThreadRng,
               _conn: HttpConnection)
