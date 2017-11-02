@@ -133,6 +133,20 @@ impl<T: Identifiable + MtProtoSized> Message<T> {
     pub fn unwrap_decrypted_body(self) -> T {
         self.into_decrypted_body().expect("`Message::Decrypted` variant")
     }
+
+    /// Unwrap the body of the message.
+    ///
+    /// Returns `Some(body)` if the message type parameter matches the type of this message.
+    /// Otherwise returns `None`.
+    pub fn into_body(self, message_type: MessageType) -> Option<T> {
+        match (message_type, self) {
+            (MessageType::PlainText, Message::PlainText { body, .. }) =>
+                Some(body.into_inner().into_inner()),
+            (MessageType::Encrypted, Message::Decrypted { decrypted_data }) =>
+                Some(decrypted_data.body.into_inner().into_inner()),
+            (_, _) => None,
+        }
+    }
 }
 
 impl<T> Message<T> {

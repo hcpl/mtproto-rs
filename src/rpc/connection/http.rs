@@ -18,19 +18,6 @@ use tl::TLObject;
 use super::HTTP_SERVER_ADDRS;
 
 
-#[derive(Debug)]
-pub struct HttpConnection {
-    server_addr: hyper::Uri,
-}
-
-impl Default for HttpConnection {
-    fn default() -> HttpConnection {
-        HttpConnection {
-            server_addr: HTTP_SERVER_ADDRS[0].clone(),
-        }
-    }
-}
-
 macro_rules! bailf {
     ($e:expr) => {
         return Box::new(futures::future::err($e.into()))
@@ -46,6 +33,20 @@ macro_rules! tryf {
     }
 }
 
+
+#[derive(Debug)]
+pub struct HttpConnection {
+    server_addr: hyper::Uri,
+}
+
+impl Default for HttpConnection {
+    fn default() -> HttpConnection {
+        HttpConnection {
+            server_addr: HTTP_SERVER_ADDRS[0].clone(),
+        }
+    }
+}
+
 impl HttpConnection {
     pub fn new(server_addr: hyper::Uri) -> HttpConnection {
         HttpConnection { server_addr }
@@ -53,13 +54,16 @@ impl HttpConnection {
 
     pub fn request<T, U>(&mut self,
                          http_client: HttpClient<HttpConnector>,
-                         session: Session,
-                         request_message: Message<T>,
+                         mut session: Session,
+                         request_data: T,
+                         request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (HttpClient<HttpConnector>, Message<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (HttpClient<HttpConnector>, Option<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
+        let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
+
         let http_request = tryf!(self.create_http_request(request_message));
         debug!("HTTP request: {:?}", &http_request);
 
@@ -72,7 +76,7 @@ impl HttpConnection {
         Box::new(request_future.and_then(move |response_bytes| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (http_client, msg, session))
+                .map(move |msg| (http_client, msg.into_body(response_message_type), session))
         }))
     }
 
@@ -98,6 +102,21 @@ impl HttpConnection {
     }
 }
 
+
+fn create_message<T>(session: &mut Session,
+                     data: T,
+                     message_type: MessageType)
+                    -> error::Result<Message<T>>
+    where T: fmt::Debug + TLObject
+{
+    let message = match message_type {
+        MessageType::PlainText => session.create_plain_text_message(data)?,
+        MessageType::Encrypted => session.create_encrypted_message_no_acks(data)?.unwrap(), // FIXME
+    };
+    debug!("Message to send: {:#?}", &message);
+
+    Ok(message)
+}
 
 fn parse_response<U>(session: &Session,
                      response_bytes: &[u8],
@@ -136,7 +155,7 @@ fn parse_response<U>(session: &Session,
         MessageType::Encrypted => Some((len - 24) as u32),
     };
 
-    let response = session.process_message(&response_bytes, encrypted_data_len)?;
+    let response_message = session.process_message(&response_bytes, encrypted_data_len)?;
 
-    Ok(response)
+    Ok(response_message)
 }

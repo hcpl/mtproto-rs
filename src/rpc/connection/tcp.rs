@@ -19,6 +19,22 @@ use tl::TLObject;
 use super::TCP_SERVER_ADDRS;
 
 
+macro_rules! bailf {
+    ($e:expr) => {
+        return Box::new(futures::future::err($e.into()))
+    }
+}
+
+macro_rules! tryf {
+    ($e:expr) => {
+        match { $e } {
+            Ok(v) => v,
+            Err(e) => bailf!(e),
+        }
+    }
+}
+
+
 #[derive(Debug)]
 pub struct TcpConnection {
     mode_info: TcpModeInfo,
@@ -48,13 +64,16 @@ impl TcpConnection {
 
     pub fn request<T, U>(&mut self,
                          socket: TcpStream,
-                         session: Session,
-                         request_message: Message<T>,
+                         mut session: Session,
+                         request_data: T,
+                         request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (TcpStream, Message<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Option<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
+        let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
+
         let request_future = match self.mode_info {
             TcpModeInfo::Full(ref mut mode_info)         => mode_info.request(socket, request_message),
             TcpModeInfo::Intermediate(ref mut mode_info) => mode_info.request(socket, request_message),
@@ -64,9 +83,24 @@ impl TcpConnection {
         Box::new(request_future.and_then(move |(socket, response_bytes)| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (socket, msg, session))
+                .map(move |msg| (socket, msg.into_body(response_message_type), session))
         }))
     }
+}
+
+fn create_message<T>(session: &mut Session,
+                     data: T,
+                     message_type: MessageType)
+                    -> error::Result<Message<T>>
+    where T: fmt::Debug + TLObject
+{
+    let message = match message_type {
+        MessageType::PlainText => session.create_plain_text_message(data)?,
+        MessageType::Encrypted => session.create_encrypted_message_no_acks(data)?.unwrap(), // FIXME
+    };
+    debug!("Message to send: {:#?}", &message);
+
+    Ok(message)
 }
 
 fn parse_response<U>(session: &Session,
@@ -92,10 +126,9 @@ fn parse_response<U>(session: &Session,
         MessageType::Encrypted => Some((len - 24) as u32),
     };
 
-    let response = session.process_message(&response_bytes, encrypted_data_len)?;
-    debug!("Message received: {:#?}", &response);
+    let response_message = session.process_message(&response_bytes, encrypted_data_len)?;
 
-    Ok(response)
+    Ok(response_message)
 }
 
 
@@ -119,22 +152,6 @@ impl From<TcpMode> for TcpModeInfo {
             TcpMode::Full         => TcpModeInfo::Full(FullModeInfo::new()),
             TcpMode::Intermediate => TcpModeInfo::Intermediate(IntermediateModeInfo::new()),
             TcpMode::Abridged     => TcpModeInfo::Abridged(AbridgedModeInfo::new()),
-        }
-    }
-}
-
-
-macro_rules! bailf {
-    ($e:expr) => {
-        return Box::new(futures::future::err($e.into()))
-    }
-}
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match { $e } {
-            Ok(v) => v,
-            Err(e) => bailf!(e),
         }
     }
 }
