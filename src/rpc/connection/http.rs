@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str;
 
-use futures::{self, Future, IntoFuture, Stream};
+use futures::{Future, IntoFuture, Stream};
 use hyper::{self, Client as HttpClient, Method as HttpMethod, Request as HttpRequest};
 use hyper::client::HttpConnector;
 use hyper::header;

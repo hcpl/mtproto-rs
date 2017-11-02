@@ -1,12 +1,16 @@
 use std::net::SocketAddr;
 
 use hyper;
+use futures::Future;
+use tokio_core::reactor::Handle;
+
+use error;
 
 
 /// Helper macros for use in `tcp` and `http` modules
 macro_rules! bailf {
     ($e:expr) => {
-        return Box::new(futures::future::err($e.into()))
+        return Box::new(::futures::future::err($e.into()))
     }
 }
 
@@ -43,15 +47,15 @@ pub enum Connection {
     Http(HttpConnection),
 }
 
-impl Default for Connection {
-    fn default() -> Connection {
-        Connection::tcp_default()
-    }
-}
-
 impl Connection {
-    pub fn tcp_default() -> Connection {
-        Connection::Tcp(TcpConnection::default())
+    pub fn default_with_handle(handle: Handle) -> Box<Future<Item = Connection, Error = error::Error>> {
+        Connection::tcp_default(handle)
+    }
+
+    pub fn tcp_default(handle: Handle) -> Box<Future<Item = Connection, Error = error::Error>> {
+        Box::new(TcpConnection::default_with_handle(handle).map(|conn| {
+            Connection::Tcp(conn)
+        }))
     }
 
     pub fn http_default() -> Connection {

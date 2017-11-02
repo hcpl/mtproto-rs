@@ -22,7 +22,6 @@ use mtproto::rpc::connection::{TCP_SERVER_ADDRS, TcpConnection, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
-use tokio_core::net::TcpStream;
 use tokio_core::reactor::{Core, Handle};
 
 
@@ -82,28 +81,26 @@ fn auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = erro
     let session = Session::new(rng.gen(), app_info);
 
     let remote_addr = TCP_SERVER_ADDRS[0];
-    let conn = TcpConnection::new(tcp_mode, remote_addr);
-    let socket = TcpStream::connect(&remote_addr, &handle).map_err(error::Error::from);
+    // TODO: replace with session::connect(handlle)
+    let conn = TcpConnection::new(handle, tcp_mode, remote_addr).map_err(Into::into);
 
-    let auth_future = socket
-        .map(|socket| (socket, session, rng, conn))
-        .and_then(unpack!(auth_step1(socket, session, rng, conn)))
-        .and_then(unpack!(auth_step2(socket, response, session, rng, conn, nonce)))
-        .and_then(unpack!(auth_step3(socket, response, session, rng, conn)));
+    let auth_future = conn
+        .map(|conn| (conn, session, rng))
+        .and_then(unpack!(auth_step1(conn, session, rng)))
+        .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
+        .and_then(unpack!(auth_step3(conn, response, session, rng)));
 
     Box::new(auth_future)
 }
 
-fn auth_step1(socket: TcpStream,
+fn auth_step1(conn: TcpConnection,
               session: Session,
-              mut rng: ThreadRng,
-              mut conn: TcpConnection)
+              mut rng: ThreadRng)
     -> Box<Future<Item = (
-           TcpStream,
+           TcpConnection,
            schema::ResPQ,
            Session,
            ThreadRng,
-           TcpConnection,
            i128::i128,
        ), Error = error::Error>>
 {
@@ -112,23 +109,21 @@ fn auth_step1(socket: TcpStream,
         nonce: nonce,
     };
 
-    let request = conn.request(socket, session, req_pq, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request(session, req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(s, d, session)| (s, d.unwrap(), session, rng, conn, nonce)).map_err(Into::into))
+    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng, nonce)).map_err(Into::into))
 }
 
-fn auth_step2(socket: TcpStream,
+fn auth_step2(conn: TcpConnection,
               response: schema::ResPQ,
               session: Session,
               mut rng: ThreadRng,
-              mut conn: TcpConnection,
               nonce: i128::i128)
     -> Box<Future<Item = (
-           TcpStream,
+           TcpConnection,
            schema::Server_DH_Params,
            Session,
            ThreadRng,
-           TcpConnection,
        ), Error = error::Error>>
 {
     let res_pq = response;
@@ -191,16 +186,15 @@ fn auth_step2(socket: TcpStream,
         encrypted_data: encrypted_data.to_vec().into(),
     };
 
-    let request = conn.request(socket, session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request(session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(s, d, session)| (s, d.unwrap(), session, rng, conn)).map_err(Into::into))
+    Box::new(request.map(move |(c, d, session)| (c, d.unwrap(), session, rng)).map_err(Into::into))
 }
 
-fn auth_step3(_socket: TcpStream,
+fn auth_step3(_conn: TcpConnection,
               _response: schema::Server_DH_Params,
               _session: Session,
-              _rng: ThreadRng,
-              _conn: TcpConnection)
+              _rng: ThreadRng)
     -> Box<Future<Item = (), Error = error::Error>>
 {
     Box::new(futures::future::ok(()))

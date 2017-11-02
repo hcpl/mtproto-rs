@@ -5,8 +5,10 @@ use std::fmt;
 use std::mem;
 
 use chrono::{Timelike, Utc};
+use futures::Future;
 use serde::de::{DeserializeSeed, DeserializeOwned};
 use serde_mtproto::{Boxed, Identifiable, MtProtoSized, WithSize};
+use tokio_core::reactor::Handle;
 
 use error::{self, ErrorKind};
 use manual_types::Object;
@@ -51,7 +53,7 @@ pub struct Session {
 
     // Public data
     pub app_info: AppInfo,
-    pub connection: Connection,
+    pub connection: Option<Connection>,
 }
 
 impl Session {
@@ -65,9 +67,19 @@ impl Session {
             to_ack: Vec::new(),
 
             app_info: app_info,
-            connection: Connection::default(),
+            connection: None,
         }
     }
+
+    pub fn connect<'session>(&'session mut self, handle: Handle)
+        -> Box<Future<Item = (), Error = error::Error> + 'session>
+    {
+        Box::new(Connection::default_with_handle(handle).map(move |conn| {
+            self.connection = Some(conn);
+        }))
+    }
+
+    // TODO: add a disconnect method
 
     fn next_seq_no(&mut self, purpose: MessagePurpose) -> i32 {
         match purpose {

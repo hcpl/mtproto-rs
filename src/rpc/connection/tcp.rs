@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_core::net::TcpStream;
+use tokio_core::reactor::Handle;
 use tokio_io;
 
 use error::{self, ErrorKind};
@@ -21,18 +22,15 @@ use super::TCP_SERVER_ADDRS;
 
 #[derive(Debug)]
 pub struct TcpConnection {
+    socket: TcpStream,
     mode_handler: TcpModeHandler,
     server_addr: SocketAddr,
 }
 
-impl Default for TcpConnection {
-    fn default() -> TcpConnection {
-        TcpConnection::new(TcpMode::Full, TCP_SERVER_ADDRS[0])
-    }
-}
-
 impl TcpConnection {
-    pub fn new(mode: TcpMode, server_addr: SocketAddr) -> TcpConnection {
+    pub fn new(handle: Handle, mode: TcpMode, server_addr: SocketAddr)
+        -> Box<Future<Item = TcpConnection, Error = error::Error>>
+    {
         if log_enabled!(LogLevel::Info) {
             let mode_str = match mode {
                 TcpMode::Full => "full",
@@ -43,25 +41,35 @@ impl TcpConnection {
             info!("New TCP connection in {} mode to {}", mode_str, server_addr);
         }
 
-        TcpConnection { mode_handler: TcpModeHandler::from(mode), server_addr }
+        Box::new(TcpStream::connect(&server_addr, &handle).map(move |socket| {
+            TcpConnection { socket, mode_handler: TcpModeHandler::from(mode), server_addr }
+        }).map_err(Into::into))
     }
 
-    pub fn request<T, U>(&mut self,
-                         socket: TcpStream,
+    pub fn default_with_handle(handle: Handle)
+        -> Box<Future<Item = TcpConnection, Error = error::Error>>
+    {
+        TcpConnection::new(handle, TcpMode::Full, TCP_SERVER_ADDRS[0])
+    }
+
+    pub fn request<T, U>(self,
                          mut session: Session,
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (TcpStream, Option<U>, Session), Error = error::Error>>
+        -> Box<Future<Item = (TcpConnection, Option<U>, Session), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
         let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
 
+        // Split up parts, to be reassembled afterwards
+        let TcpConnection { socket, mut mode_handler, server_addr } = self;
+
         let request_future = {
             use self::TcpModeHandler::*;
 
-            match self.mode_handler {
+            match mode_handler {
                 Full(ref mut mode_handler)         => mode_handler.request(socket, request_message),
                 Intermediate(ref mut mode_handler) => mode_handler.request(socket, request_message),
                 Abridged(ref mut mode_handler)     => mode_handler.request(socket, request_message),
@@ -71,7 +79,11 @@ impl TcpConnection {
         Box::new(request_future.and_then(move |(socket, response_bytes)| {
             parse_response::<U>(&session, &response_bytes, response_message_type)
                 .into_future()
-                .map(move |msg| (socket, msg.into_body(response_message_type), session))
+                .map(move |msg| {
+                    let conn = TcpConnection { socket, mode_handler, server_addr };
+
+                    (conn, msg.into_body(response_message_type), session)
+                })
         }))
     }
 }
@@ -114,7 +126,7 @@ fn parse_response<U>(session: &Session,
         MessageType::Encrypted => Some((len - 24) as u32),
     };
 
-    let response_message = session.process_message(&response_bytes, encrypted_data_len)?;
+    let response_message = session.process_message(response_bytes, encrypted_data_len)?;
 
     Ok(response_message)
 }
@@ -200,7 +212,6 @@ impl MtProtoTcpMode for FullModeHandler {
             // TODO: check seq_no
             let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-            //tokio_io::io::read_exact(socket, vec![0; ulen - 8]).and_then(move |(socket, last_bytes)| {
             let process_last_bytes_future = tokio_io::io::read_exact(socket, vec![0; ulen - 8])
                 .map_err(Into::into)
                 .and_then(move |(socket, last_bytes)|
@@ -218,7 +229,6 @@ impl MtProtoTcpMode for FullModeHandler {
                     futures::future::ok((socket, body))
                 } else {
                     futures::future::err(
-                        //ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum).into())
                         error::Error::from(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum)))
                 };
 
