@@ -39,7 +39,7 @@ impl HttpConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (HttpConnection, U, Session), Error = error::Error>>
+                        -> Box<Future<Item = (HttpConnection, Session, U), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
@@ -65,7 +65,7 @@ impl HttpConnection {
                     let msg_type = msg.message_type();
 
                     msg.into_body(response_message_type)
-                        .map(|msg| (conn, msg, session))
+                        .map(|msg| (conn, session, msg))
                         .ok_or(ErrorKind::ResponseMessageTypeMismatch(response_message_type, msg_type))
                         .map_err(Into::into)
                         .into_future()

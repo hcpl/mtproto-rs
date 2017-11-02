@@ -57,7 +57,7 @@ impl TcpConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (TcpConnection, U, Session), Error = error::Error>>
+                        -> Box<Future<Item = (TcpConnection, Session, U), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
@@ -84,8 +84,9 @@ impl TcpConnection {
                     let msg_type = msg.message_type();
 
                     msg.into_body(response_message_type)
-                        .map(|msg| (conn, msg, session))
-                        .ok_or(ErrorKind::ResponseMessageTypeMismatch(response_message_type, msg_type).into())
+                        .map(|msg| (conn, session, msg))
+                        .ok_or(ErrorKind::ResponseMessageTypeMismatch(response_message_type, msg_type))
+                        .map_err(Into::into)
                         .into_future()
                 })
         }))

@@ -2,7 +2,7 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use hyper;
-use futures::Future;
+use futures::{self, Future};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use tokio_core::reactor::Handle;
@@ -53,38 +53,63 @@ pub enum Connection {
 }
 
 impl Connection {
-    pub fn default_with_handle(handle: Handle) -> Box<Future<Item = Connection, Error = error::Error>> {
-        Connection::tcp_default(handle)
+    pub fn new(handle: Handle, conn_config: ConnectionConfig)
+        -> Box<Future<Item = Connection, Error = error::Error>>
+    {
+        match conn_config {
+            ConnectionConfig::Tcp(tcp_mode, server_addr) => {
+                Box::new(TcpConnection::new(handle, tcp_mode, server_addr).map(Connection::Tcp))
+            },
+            ConnectionConfig::Http(server_addr) => {
+                Box::new(futures::future::ok(Connection::Http(HttpConnection::new(handle, server_addr))))
+            },
+        }
     }
 
-    pub fn tcp_default(handle: Handle) -> Box<Future<Item = Connection, Error = error::Error>> {
+    pub fn default_with_handle(handle: Handle)
+        -> Box<Future<Item = Connection, Error = error::Error>>
+    {
+        Connection::tcp_default_with_handle(handle)
+    }
+
+    pub fn tcp_default_with_handle(handle: Handle)
+        -> Box<Future<Item = Connection, Error = error::Error>>
+    {
         Box::new(TcpConnection::default_with_handle(handle).map(|conn| {
             Connection::Tcp(conn)
         }))
     }
 
-    pub fn http_default(handle: Handle) -> Connection {
+    pub fn http_default_with_handle(handle: Handle) -> Connection {
         Connection::Http(HttpConnection::default_with_handle(handle))
     }
 
+    /// Delegates to `request()` methods of inner connection types.
     pub fn request<T, U>(self,
                          session: Session,
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-                        -> Box<Future<Item = (Connection, U, Session), Error = error::Error>>
+                        -> Box<Future<Item = (Connection, Session, U), Error = error::Error>>
         where T: fmt::Debug + Serialize + TLObject,
               U: fmt::Debug + DeserializeOwned + TLObject,
     {
         match self {
             Connection::Tcp(conn) => {
                 Box::new(conn.request(session, request_data, request_message_type, response_message_type)
-                    .map(|(tcp_conn, response, session)| (Connection::Tcp(tcp_conn), response, session)))
+                    .map(|(tcp_conn, session, response)| (Connection::Tcp(tcp_conn), session, response)))
             },
             Connection::Http(conn) => {
                 Box::new(conn.request(session, request_data, request_message_type, response_message_type)
-                    .map(|(http_conn, response, session)| (Connection::Http(http_conn), response, session)))
+                    .map(|(http_conn, session, response)| (Connection::Http(http_conn), session, response)))
             },
         }
     }
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConnectionConfig {
+    Tcp(TcpMode, SocketAddr),
+    Http(hyper::Uri),
 }

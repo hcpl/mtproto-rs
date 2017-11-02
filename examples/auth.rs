@@ -19,8 +19,8 @@ use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
 use futures::Future;
 use mtproto::rpc::{AppInfo, MessageType, Session};
-use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS,
-                               Connection, HttpConnection, TcpConnection, TcpMode};
+use mtproto::rpc::session::SessionConnection;
+use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS, ConnectionConfig, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 use rand::{Rng, ThreadRng};
@@ -78,16 +78,14 @@ fn tcp_auth(handle: Handle, tcp_mode: TcpMode) -> Box<Future<Item = (), Error = 
     let session = Session::new(rng.gen(), app_info);
 
     let remote_addr = TCP_SERVER_ADDRS[0];
-    // TODO: replace with session::connect
-    let conn = TcpConnection::new(handle, tcp_mode, remote_addr)
-        .map(|tcp_conn| Connection::Tcp(tcp_conn))
-        .map_err(Into::into);
+    let conn_config = ConnectionConfig::Tcp(tcp_mode, remote_addr);
+    let session_conn = session.connect(handle, conn_config).map_err(Into::<error::Error>::into);
 
-    let auth_future = conn
-        .map(|conn| (conn, session, rng))
-        .and_then(unpack!(auth_step1(conn, session, rng)))
-        .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
-        .and_then(unpack!(auth_step3(conn, response, session, rng)));
+    let auth_future = session_conn
+        .map(|sconn| (sconn, rng))
+        .and_then(unpack!(auth_step1(session_conn, rng)))
+        .and_then(unpack!(auth_step2(session_conn, response, rng, nonce)))
+        .and_then(unpack!(auth_step3(session_conn, response, rng)));
 
     Box::new(auth_future)
 }
@@ -98,25 +96,25 @@ fn http_auth(handle: Handle) -> Box<Future<Item = (), Error = error::Error>> {
     let session = Session::new(rng.gen(), app_info);
 
     let remote_addr = HTTP_SERVER_ADDRS[0].clone();
-    // TODO: replace with session::connect
-    let http_conn = HttpConnection::new(handle, remote_addr);
-    let conn = Connection::Http(http_conn);
+    let conn_config = ConnectionConfig::Http(remote_addr);
+    let session_conn = session.connect(handle, conn_config).map_err(Into::<error::Error>::into);
 
-    let auth_future = auth_step1(conn, session, rng)
-        .and_then(unpack!(auth_step2(conn, response, session, rng, nonce)))
-        .and_then(unpack!(auth_step3(conn, response, session, rng)));
+    let auth_future = session_conn
+        .map(|sconn| (sconn, rng))
+        .and_then(unpack!(auth_step1(session_conn, rng)))
+        .and_then(unpack!(auth_step2(session_conn, response, rng, nonce)))
+        .and_then(unpack!(auth_step3(session_conn, response, rng)));
 
     Box::new(auth_future)
 }
 
 
-fn auth_step1(conn: Connection,
-              session: Session,
+/// Step 1: DH exchange initiation using PQ request
+fn auth_step1(session_conn: SessionConnection,
               mut rng: ThreadRng)
     -> Box<Future<Item = (
-           Connection,
+           SessionConnection,
            schema::ResPQ,
-           Session,
            ThreadRng,
            i128::i128,
        ), Error = error::Error>>
@@ -126,22 +124,21 @@ fn auth_step1(conn: Connection,
         nonce: nonce,
     };
 
-    let request = conn.request(session, req_pq, MessageType::PlainText, MessageType::PlainText);
+    let request = session_conn.request(req_pq, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(conn, response, session)| {
-        (conn, response, session, rng, nonce)
+    Box::new(request.map(move |(session_conn, response)| {
+        (session_conn, response, rng, nonce)
     }).map_err(Into::into))
 }
 
-fn auth_step2(conn: Connection,
+/// Step 2: Presenting PQ proof of work & server authentication
+fn auth_step2(session: SessionConnection,
               response: schema::ResPQ,
-              session: Session,
               mut rng: ThreadRng,
               nonce: i128::i128)
     -> Box<Future<Item = (
-           Connection,
+           SessionConnection,
            schema::Server_DH_Params,
-           Session,
            ThreadRng,
        ), Error = error::Error>>
 {
@@ -206,16 +203,19 @@ fn auth_step2(conn: Connection,
         //encrypted_data: encrypted_data2.into(),
     };
 
-    let request = conn.request(session, req_dh_params, MessageType::PlainText, MessageType::PlainText);
+    let request = session.request(req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(conn, response, session)| {
-        (conn, response, session, rng)
+    Box::new(request.map(move |(session, response)| {
+        (session, response, rng)
     }).map_err(Into::into))
 }
 
-fn auth_step3(_conn: Connection,
+/// Step 3: DH key exchange complete
+/// 
+/// Should be this but step 2 in this implementation always ends with
+/// 404 Not Found, so this is left empty for investigations.
+fn auth_step3(_session: SessionConnection,
               _response: schema::Server_DH_Params,
-              _session: Session,
               _rng: ThreadRng)
     -> Box<Future<Item = (), Error = error::Error>>
 {
@@ -240,16 +240,14 @@ fn fetch_app_info() -> error::Result<AppInfo> {
 }
 
 
-fn run_collect_errors(core: &mut Core) -> Vec<error::Error> {
-    let mut errors = vec![];
+fn run_collect_results(core: &mut Core) -> Vec<error::Result<()>> {
+    let mut results = vec![];
 
     macro_rules! run_auth_future {
         ($($tt:tt)+) => {
             let auth_future = $($tt)+;
 
-            if let Err(e) = core.run(auth_future) {
-                errors.push(e);
-            }
+            results.push(core.run(auth_future))
         };
     }
 
@@ -258,7 +256,7 @@ fn run_collect_errors(core: &mut Core) -> Vec<error::Error> {
     run_auth_future!(tcp_auth(core.handle(), TcpMode::Full));
     run_auth_future!(http_auth(core.handle()));
 
-    errors
+    results
 }
 
 fn run() -> error::Result<()> {
@@ -266,8 +264,11 @@ fn run() -> error::Result<()> {
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 
-    for (i, e) in run_collect_errors(&mut core).into_iter().enumerate() {
-        println!("{}. {}", i + 1, e);
+    for (i, result) in run_collect_results(&mut core).into_iter().enumerate() {
+        match result {
+            Ok(()) => println!("{}. Success", i + 1),
+            Err(e) => println!("{}. {}", i + 1, e),
+        }
     }
 
     Ok(())
