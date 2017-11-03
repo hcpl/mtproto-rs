@@ -40,3 +40,6 @@ select = "0.4"
 test-logger = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
+
+[features]
+register-ctors = ["tl_codegen/register-ctors"]

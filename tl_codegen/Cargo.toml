@@ -13,3 +13,4 @@ synom = { version = "0.11", optional = true }
 
 [features]
 parsing = ["syn/parsing", "synom"]
+register-ctors = []

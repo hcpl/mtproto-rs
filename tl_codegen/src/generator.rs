@@ -104,8 +104,10 @@ pub fn generate_ast_for(input: &str) -> syn::Crate {
 
     let ctors_typeck_info = constructors.ctors_typeck_info();
 
+    #[cfg(feature = "register-ctors")]
     let mut dynamic_ctors: Vec<(Vec<String>, u32, syn::Stmt)> = vec![];
     for (namespaces, constructor_map) in &constructors.types {
+        #[cfg(feature = "register-ctors")]
         dynamic_ctors.extend(constructor_map.values()
             .flat_map(|c| c.to_syn_dynamic_ctors(&ctors_typeck_info).unwrap())); // FIXME
 
@@ -115,18 +117,21 @@ pub fn generate_ast_for(input: &str) -> syn::Crate {
         process_namespaces(&mut krate.items, namespaces, substructs);
     }
 
-    dynamic_ctors.sort_by(|&(ref names1, tl_id1, ref _stmt1), &(ref names2, tl_id2, ref _stmt2)| {
-        names1.cmp(names2).then(tl_id1.cmp(&tl_id2))
-    });
+    #[cfg(feature = "register-ctors")]
+    {
+        dynamic_ctors.sort_by(|&(ref names1, tl_id1, ref _stmt1), &(ref names2, tl_id2, ref _stmt2)| {
+            names1.cmp(names2).then(tl_id1.cmp(&tl_id2))
+        });
 
-    let stmts: Vec<syn::Stmt> = dynamic_ctors.into_iter().map(|(_, _, stmt)| stmt).collect();
-    let register_ctors = syn::parse_item(quote! {
+        let stmts: Vec<syn::Stmt> = dynamic_ctors.into_iter().map(|(_, _, stmt)| stmt).collect();
+        let register_ctors = syn::parse_item(quote! {
         /// Registers all generated deserializable constructors to the provided constructors map
-        pub fn register_ctors(cstore: &mut ::tl::dynamic::TLConstructorsMap) {
-            #(#stmts)*
-        }
-    }.as_str()).unwrap();
-    krate.items.push(register_ctors);
+            pub fn register_ctors(cstore: &mut ::tl::dynamic::TLConstructorsMap) {
+                #(#stmts)*
+            }
+        }.as_str()).unwrap();
+        krate.items.push(register_ctors);
+    }
 
     let mut rpc_items = vec![];
     for (namespaces, substructs) in &constructors.functions {
@@ -417,6 +422,7 @@ impl Constructors {
         map
     }
 
+    #[cfg(feature = "register-ctors")]
     fn to_syn_dynamic_ctors<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>)
         -> error::Result<Vec<(Vec<String>, u32, syn::Stmt)>>
     {
