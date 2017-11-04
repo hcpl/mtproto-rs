@@ -42,6 +42,7 @@ pub enum Message<T> {
 // by trying to match representations we can synchronize the range of allowed values
 /// Holds data either to be encrypted (in requests) or after decryption (in responses).
 #[derive(Debug, PartialEq, Serialize, Deserialize, MtProtoSized)]
+#[serde(bound(deserialize = "T: ::serde::Deserialize<'de> + Identifiable + MtProtoSized"))]
 pub struct DecryptedData<T> {
     pub(super) salt: i64,
     pub(super) session_id: i64,
@@ -156,7 +157,7 @@ impl<T> Message<T> {
     fn from_raw_message<'msg>(raw_message: RawMessage<'msg, T>,
                               opt_key: Option<AuthKey>)
                              -> error::Result<Message<T>>
-        where T: fmt::Debug + DeserializeOwned
+        where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
     {
        let message =  match raw_message {
             RawMessage::PlainText { auth_key_id, message_id, ref_body } => {
@@ -219,7 +220,9 @@ impl<T: DeserializeOwned> MessageSeed<T> {
     }
 }
 
-impl<'de, T: fmt::Debug + DeserializeOwned> DeserializeSeed<'de> for MessageSeed<T> {
+impl<'de, T> DeserializeSeed<'de> for MessageSeed<T>
+    where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
+{
     type Value = Message<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Message<T>, D::Error>
@@ -231,7 +234,9 @@ impl<'de, T: fmt::Debug + DeserializeOwned> DeserializeSeed<'de> for MessageSeed
             phantom: PhantomData<T>,
         }
 
-        impl<'de, T: fmt::Debug + DeserializeOwned> Visitor<'de> for MessageVisitor<T> {
+        impl<'de, T> Visitor<'de> for MessageVisitor<T>
+            where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
+        {
             type Value = Message<T>;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {

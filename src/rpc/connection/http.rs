@@ -119,7 +119,7 @@ fn parse_response<U>(session: &Session,
                      response_bytes: &[u8],
                      message_type: MessageType)
                     -> error::Result<Message<U>>
-    where U: fmt::Debug + DeserializeOwned
+    where U: fmt::Debug + DeserializeOwned + TLObject
 {
     debug!("Response bytes: {:?}", &response_bytes);
 

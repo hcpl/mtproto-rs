@@ -227,7 +227,7 @@ impl Session {
 
     /// Reads a `Message` from raw bytes.
     pub fn process_message<T>(&self, message_bytes: &[u8], encrypted_data_len: Option<u32>) -> error::Result<Message<T>>
-        where T: fmt::Debug + DeserializeOwned
+        where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
     {
         use serde_mtproto::Deserializer;
 

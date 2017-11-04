@@ -57,6 +57,10 @@ impl fmt::Debug for TLObject {
 // &TLObject impls
 
 impl<'a> Identifiable for &'a TLObject {
+    fn all_type_ids() -> &'static [u32] {
+        panic!("Cannot use static methods on trait objects")
+    }
+
     fn type_id(&self) -> u32 {
         (**self).type_id()
     }
@@ -75,6 +79,10 @@ impl Clone for Box<TLObject> {
 }
 
 impl Identifiable for Box<TLObject> {
+    fn all_type_ids() -> &'static [u32] {
+        panic!("Cannot use static methods on trait objects")
+    }
+
     fn type_id(&self) -> u32 {
         (**self).type_id()
     }
