@@ -24,7 +24,7 @@ serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto" }
 toml = "0.4"
 
 [build-dependencies]
-rustfmt = "0.9"
+rustfmt = { version = "0.9", optional = true }
 tl_codegen = { path = "tl_codegen" }
 
 [dev-dependencies]
@@ -38,3 +38,6 @@ select = "0.4"
 test-logger = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
+
+[features]
+build-script-lib-rustfmt = ["rustfmt"]

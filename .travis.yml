@@ -15,9 +15,10 @@ cache: cargo
 env:
   global:
     - RUST_BACKTRACE=1
+    - FEATURES="build-script-lib-rustfmt"
 
 script:
   - pwd
   - ls -la
-  - cargo test --verbose --all
-  - cargo build --verbose --all --examples
+  - cargo test --verbose --all --features "${FEATURES}"
+  - cargo build --verbose --all --examples --features "${FEATURES}"
