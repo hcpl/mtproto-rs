@@ -43,12 +43,13 @@ fn run() -> io::Result<()> {
     let input = Input::File(PathBuf::from(RUST_SCHEMA_FILE));
     let config = Config::from_toml_path(Path::new("rustfmt.toml")).unwrap_or_else(|_| Config::default());
 
-    if rustfmt::run(input, &config).has_no_errors() {
-        Ok(())
-    } else {
-        let msg = format!("error while running `rustfmt` on {}", RUST_SCHEMA_FILE);
-        Err(io::Error::new(io::ErrorKind::Other, msg))
+    // Applying `rustfmt` is an optional step, so if it fails we should
+    // at most print a message and move on
+    if !rustfmt::run(input, &config).has_no_errors() {
+        eprintln!("error while running `rustfmt` on {}; skipping the failure", RUST_SCHEMA_FILE);
     }
+
+    Ok(())
 }
 
 fn main() {
