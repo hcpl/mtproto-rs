@@ -5,16 +5,20 @@ use std::fmt;
 use std::mem;
 
 use chrono::{Timelike, Utc};
+use futures::Future;
+use serde::ser::Serialize;
 use serde::de::{DeserializeSeed, DeserializeOwned};
 use serde_mtproto::{Boxed, Identifiable, MtProtoSized, WithSize};
+use tokio_core::reactor::Handle;
 
 use error::{self, ErrorKind};
 use manual_types::Object;
 use tl::TLObject;
 
 use super::{AppInfo, Salt};
+use super::connection::{Connection, ConnectionConfig};
 use super::encryption::AuthKey;
-use super::message::{DecryptedData, Message, MessageSeed};
+use super::message::{DecryptedData, Message, MessageType, MessageSeed};
 
 
 fn next_message_id() -> i64 {
@@ -40,13 +44,16 @@ enum MessagePurpose {
 /// https://core.telegram.org/mtproto#high-level-component-rpc-query-language-api.
 #[derive(Debug)]
 pub struct Session {
+    // Private data
     session_id: i64,
     //temp_session_id: Option<i64>    // Not used (yet)
     server_salts: Vec<Salt>,
     seq_no: i32,
     auth_key: Option<AuthKey>,
     to_ack: Vec<i64>,
-    app_info: AppInfo,
+
+    // Public data
+    pub app_info: AppInfo,
 }
 
 impl Session {
@@ -58,8 +65,17 @@ impl Session {
             seq_no: 0,
             auth_key: None,
             to_ack: Vec::new(),
+
             app_info: app_info,
         }
+    }
+
+    pub fn connect(self, handle: Handle, conn_config: ConnectionConfig)
+        -> Box<Future<Item = SessionConnection, Error = error::Error>>
+    {
+        Box::new(Connection::new(handle, conn_config).map(move |conn| {
+            SessionConnection::new(self, conn)
+        }))
     }
 
     fn next_seq_no(&mut self, purpose: MessagePurpose) -> i32 {
@@ -211,7 +227,7 @@ impl Session {
 
     /// Reads a `Message` from raw bytes.
     pub fn process_message<T>(&self, message_bytes: &[u8], encrypted_data_len: Option<u32>) -> error::Result<Message<T>>
-        where T: fmt::Debug + DeserializeOwned
+        where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
     {
         use serde_mtproto::Deserializer;
 
@@ -219,5 +235,33 @@ impl Session {
         let seed = MessageSeed::new(self.auth_key.clone(), encrypted_data_len);
 
         seed.deserialize(&mut deserializer).map_err(Into::into)
+    }
+}
+
+
+pub struct SessionConnection {
+    session: Session,
+    conn: Connection,
+}
+
+impl SessionConnection {
+    fn new(session: Session, conn: Connection) -> SessionConnection {
+        SessionConnection { session, conn }
+    }
+
+    pub fn request<T, U>(self,
+                         request_data: T,
+                         request_message_type: MessageType,
+                         response_message_type: MessageType)
+        -> Box<Future<Item = (SessionConnection, U), Error = error::Error>>
+        where T: fmt::Debug + Serialize + TLObject,
+              U: fmt::Debug + DeserializeOwned + TLObject,
+    {
+        let SessionConnection { session, conn } = self;
+        let request = conn.request(session, request_data, request_message_type, response_message_type);
+
+        Box::new(request.map(|(conn, session, response)| {
+            (SessionConnection { session, conn }, response)
+        }))
     }
 }

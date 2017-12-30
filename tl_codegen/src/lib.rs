@@ -5,7 +5,6 @@ extern crate pom;
 #[macro_use]
 extern crate quote;
 extern crate syn;
-#[cfg(feature = "parsing")]
 extern crate synom;
 
 

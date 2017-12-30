@@ -15,9 +15,10 @@ cache: cargo
 env:
   global:
     - RUST_BACKTRACE=1
+    - RUST_LOG=build_script_build=debug
 
 script:
   - pwd
   - ls -la
-  - cargo test --verbose --all
-  - cargo build --verbose --all --examples
+  - cargo test -vv --all
+  - cargo build -vv --all --examples

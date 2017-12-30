@@ -42,6 +42,7 @@ pub enum Message<T> {
 // by trying to match representations we can synchronize the range of allowed values
 /// Holds data either to be encrypted (in requests) or after decryption (in responses).
 #[derive(Debug, PartialEq, Serialize, Deserialize, MtProtoSized)]
+#[serde(bound(deserialize = "T: ::serde::Deserialize<'de> + Identifiable + MtProtoSized"))]
 pub struct DecryptedData<T> {
     pub(super) salt: i64,
     pub(super) session_id: i64,
@@ -98,40 +99,26 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
 
 
 impl<T: Identifiable + MtProtoSized> Message<T> {
-    /// Returns `Some(body)` if the message was plain-text.
-    /// Otherwise returns `None`.
-    pub fn into_plain_text_body(self) -> Option<T> {
-        match self {
-            Message::PlainText { body, .. } => Some(body.into_inner().into_inner()),
-            Message::Decrypted { .. } => None,
+    /// Get the message type of this message.
+    pub fn message_type(&self) -> MessageType {
+        match *self {
+            Message::PlainText { .. } => MessageType::PlainText,
+            Message::Decrypted { .. } => MessageType::Encrypted,
         }
     }
 
-    /// Unwraps the body of the plain-text message.
+    /// Unwrap the body of the message.
     ///
-    /// # Panics
-    ///
-    /// Panics if the message was encrypted.
-    pub fn unwrap_plain_text_body(self) -> T {
-        self.into_plain_text_body().expect("`Message::PlainText` variant")
-    }
-
-    /// Returns `Some(body)` if the message was encrypted.
+    /// Returns `Some(body)` if the message type parameter matches the type of this message.
     /// Otherwise returns `None`.
-    pub fn into_decrypted_body(self) -> Option<T> {
-        match self {
-            Message::PlainText { .. } => None,
-            Message::Decrypted { decrypted_data } => Some(decrypted_data.body.into_inner().into_inner()),
+    pub fn into_body(self, message_type: MessageType) -> Option<T> {
+        match (message_type, self) {
+            (MessageType::PlainText, Message::PlainText { body, .. }) =>
+                Some(body.into_inner().into_inner()),
+            (MessageType::Encrypted, Message::Decrypted { decrypted_data }) =>
+                Some(decrypted_data.body.into_inner().into_inner()),
+            (_, _) => None,
         }
-    }
-
-    /// Unwraps the body of the encrypted message.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the message was plain-text.
-    pub fn unwrap_decrypted_body(self) -> T {
-        self.into_decrypted_body().expect("`Message::Decrypted` variant")
     }
 }
 
@@ -170,7 +157,7 @@ impl<T> Message<T> {
     fn from_raw_message<'msg>(raw_message: RawMessage<'msg, T>,
                               opt_key: Option<AuthKey>)
                              -> error::Result<Message<T>>
-        where T: fmt::Debug + DeserializeOwned
+        where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
     {
        let message =  match raw_message {
             RawMessage::PlainText { auth_key_id, message_id, ref_body } => {
@@ -233,7 +220,9 @@ impl<T: DeserializeOwned> MessageSeed<T> {
     }
 }
 
-impl<'de, T: fmt::Debug + DeserializeOwned> DeserializeSeed<'de> for MessageSeed<T> {
+impl<'de, T> DeserializeSeed<'de> for MessageSeed<T>
+    where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
+{
     type Value = Message<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Message<T>, D::Error>
@@ -245,7 +234,9 @@ impl<'de, T: fmt::Debug + DeserializeOwned> DeserializeSeed<'de> for MessageSeed
             phantom: PhantomData<T>,
         }
 
-        impl<'de, T: fmt::Debug + DeserializeOwned> Visitor<'de> for MessageVisitor<T> {
+        impl<'de, T> Visitor<'de> for MessageVisitor<T>
+            where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
+        {
             type Value = Message<T>;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {

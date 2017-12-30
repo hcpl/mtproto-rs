@@ -29,7 +29,7 @@ const RUST_SCHEMA_FILE:    &'static str = "./src/schema.rs";
 fn collect_input() -> error::Result<String> {
     let mut tl_files = BufReader::new(File::open(TL_SCHEMA_LIST_FILE)?).lines().filter_map(|line| {
         match line {
-            Ok(ref line) if line.starts_with("//") => None,  // This line is a comment
+            Ok(ref line) if line.trim_left().starts_with("//") => None,  // This line is a comment
             Ok(filename) => Some(Ok(Path::new(TL_SCHEMA_DIR).join(filename))),
             Err(e) => Some(Err(e)),  // Do not ignore errors
         }

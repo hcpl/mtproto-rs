@@ -6,8 +6,8 @@ implementation in Rust.
 Intended to provide low-level features to create a robust foundation for
 higher-level libraries such as `telegram-rs`.
 
-Supports Rust 1.19 or newer.
-Older versions may work, but not guaranteed to.
+Supports Rust 1.19 and newer.
+Older versions may work, but are not guaranteed to.
 
 
 ## Features
@@ -34,31 +34,22 @@ Currently implemented and planned features include:
 
 ## Examples
 
-There are 3 examples which you can build and run:
+There are 2 examples which you can build and run:
 
-### `tcp_auth`
+### `auth`
 
-Fetches authorization key over TCP. Supports 3 modes: abridged,
-intermediate and full (this example uses all three).
-
-Based on [tokio](https://tokio.rs).
-
-```sh
-$ cargo run --example tcp_auth
-# For verbose output use
-$ RUST_LOG=tcp_auth=info cargo run --example tcp_auth
-```
-
-### `http_auth`
-
-Same as `tcp_auth` but over HTTP which only has 1 mode.
+Fetches authorization key over TCP and HTTP.
+TCP connection supports 3 modes: abridged, intermediate and full (this example uses all three),
+while HTTP only has 1 mode.
 
 Based on [tokio](https://tokio.rs) and [hyper](https://hyper.rs).
 
 ```sh
-$ cargo run --example http_auth
+$ cargo run --example auth
 # For verbose output use
-$ RUST_LOG=http_auth=info cargo run --example http_auth
+$ RUST_LOG=auth=info cargo run --example auth
+# Even more verbose
+$ RUST_LOG=auth=debug cargo run --example auth
 ```
 
 ### `dynamic`
@@ -84,3 +75,9 @@ MTProto-rs is licensed under either of
    http://opensource.org/licenses/MIT)
 
 at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Serde by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
