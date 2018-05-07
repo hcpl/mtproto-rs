@@ -32,12 +32,12 @@ fn main() {
     let s = serde_mtproto::to_bytes(&x).unwrap();
     info!("{:?}", &s);
 
-    let x2: Boxed<schema::Set_client_DH_params_answer> = serde_mtproto::from_bytes(&s, Some("dh_gen_retry")).unwrap();
+    let x2: Boxed<schema::Set_client_DH_params_answer> = serde_mtproto::from_bytes(&s, &["dh_gen_retry"]).unwrap();
     info!("{:#?}", &x2);
 
     assert_eq!(&x, &x2);
 
-    let x3 = cmap.deserialize(&mut serde_mtproto::Deserializer::new(&*s, Some("dh_gen_retry"))).unwrap();
+    let x3 = cmap.deserialize(&mut serde_mtproto::Deserializer::new(&*s, &["dh_gen_retry"])).unwrap();
     info!("{:#?}", &x3);
 
     let x4 = Boxed::new(x3);
@@ -46,7 +46,7 @@ fn main() {
     let s2 = serde_mtproto::to_bytes(&x4).unwrap();
     info!("{:?}", &s2);
 
-    let x5: Boxed<schema::Set_client_DH_params_answer> = serde_mtproto::from_bytes(&s2, Some("dh_gen_retry")).unwrap();
+    let x5: Boxed<schema::Set_client_DH_params_answer> = serde_mtproto::from_bytes(&s2, &["dh_gen_retry"]).unwrap();
     info!("{:#?}", &x5);
 
     assert_eq!(&x, &x5);

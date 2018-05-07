@@ -175,7 +175,7 @@ impl<T> Message<T> {
                 debug!("Decrypted data to be deserialized: {:?}", &decrypted_data_serialized);
 
                 let mut decrypted_data: DecryptedData<T> =
-                    serde_mtproto::from_reader(decrypted_data_serialized.as_slice(), None)?;
+                    serde_mtproto::from_reader(decrypted_data_serialized.as_slice(), &[])?;
 
                 decrypted_data.key = key;
 

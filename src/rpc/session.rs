@@ -231,7 +231,7 @@ impl Session {
     {
         use serde_mtproto::Deserializer;
 
-        let mut deserializer = Deserializer::new(message_bytes, None);
+        let mut deserializer = Deserializer::new(message_bytes, &[]);
         let seed = MessageSeed::new(self.auth_key.clone(), encrypted_data_len);
 
         seed.deserialize(&mut deserializer).map_err(Into::into)
