@@ -22,7 +22,7 @@ fn test_plain_text() {
     ensure_env_logger_initialized();
 
     let app_info = AppInfo::new(9000, "random text".to_owned());
-    let session = Session::new(892103, app_info);
+    let mut session = Session::new(892103, app_info);
 
     let message = session.create_plain_text_message(23).unwrap();
     debug!("{:#?}", message);
@@ -65,7 +65,7 @@ fn test_encrypted() {
 
 #[test]
 fn test_next_message_id_monotonicity() {
-    let session = Session::new(0, AppInfo::new(100, "foo hash".to_owned()));
+    let mut session = Session::new(0, AppInfo::new(100, "foo hash".to_owned()));
 
     let mut prev_id = 0;
     for _ in 0..10 {
