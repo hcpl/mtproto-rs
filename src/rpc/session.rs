@@ -21,14 +21,25 @@ use super::encryption::AuthKey;
 use super::message::{DecryptedData, Message, MessageType, MessageSeed};
 
 
-fn next_message_id() -> i64 {
-    let time = Utc::now();
-    let timestamp = time.timestamp();
-    let nano = time.nanosecond() as i64; // from u32
-
-    ((timestamp << 32) | (nano & 0x_ffff_fffc))
+#[derive(Debug)]
+struct MsgIdGenerator {
+    counter: i64,
 }
 
+impl MsgIdGenerator {
+    pub fn new() -> MsgIdGenerator {
+        MsgIdGenerator { counter: 0 }
+    }
+
+    pub fn next_id(&mut self) -> i64 {
+        let time = Utc::now();
+        let timestamp = time.timestamp();
+        let nano = time.nanosecond() as i64; // from u32
+        self.counter += 1;
+
+        ((timestamp << 32) | (nano & 0x_ffff_fffc)) + self.counter
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MessagePurpose {
@@ -51,6 +62,7 @@ pub struct Session {
     seq_no: i32,
     auth_key: Option<AuthKey>,
     to_ack: Vec<i64>,
+    mid_gen: MsgIdGenerator,
 
     // Public data
     pub app_info: AppInfo,
@@ -65,6 +77,7 @@ impl Session {
             seq_no: 0,
             auth_key: None,
             to_ack: Vec::new(),
+            mid_gen: MsgIdGenerator::new(),
 
             app_info: app_info,
         }
@@ -138,11 +151,11 @@ impl Session {
     }
 
     /// Create a plain-text message tied to this session.
-    pub fn create_plain_text_message<T>(&self, body: T) -> error::Result<Message<T>>
+    pub fn create_plain_text_message<T>(&mut self, body: T) -> error::Result<Message<T>>
         where T: TLObject
     {
         Ok(Message::PlainText {
-            message_id: next_message_id(),
+            message_id: self.mid_gen.next_id(),
             body: WithSize::new(Boxed::new(body))?,
         })
     }
@@ -182,12 +195,12 @@ impl Session {
         let msg_container = ::schema::manual::MessageContainer {
             messages: vec![
                 ::schema::manual::Message {
-                    msg_id: next_message_id(),
+                    msg_id: self.mid_gen.next_id(),
                     seqno: self.next_seq_no(MessagePurpose::NonContent),
                     body: WithSize::new(Boxed::new(Box::new(acks) as Object))?,
                 },
                 ::schema::manual::Message {
-                    msg_id: next_message_id(),
+                    msg_id: self.mid_gen.next_id(),
                     seqno: self.next_seq_no(MessagePurpose::Content),
                     body: WithSize::new(Boxed::new(Box::new(body) as Object))?,
                 }
@@ -211,7 +224,7 @@ impl Session {
         let decrypted_data = DecryptedData {
             salt: self.latest_server_salt()?,
             session_id: self.session_id,
-            message_id: next_message_id(),
+            message_id: self.mid_gen.next_id(),
             seq_no: self.next_seq_no(purpose),
             body: WithSize::new(Boxed::new(body))?,
 
@@ -231,7 +244,7 @@ impl Session {
     {
         use serde_mtproto::Deserializer;
 
-        let mut deserializer = Deserializer::new(message_bytes, None);
+        let mut deserializer = Deserializer::new(message_bytes, &[]);
         let seed = MessageSeed::new(self.auth_key.clone(), encrypted_data_len);
 
         seed.deserialize(&mut deserializer).map_err(Into::into)
