@@ -14,7 +14,7 @@ use serde_mtproto::Boxed;
 
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
     dotenv::dotenv().ok();
 
     let mut cmap = TLConstructorsMap::new();

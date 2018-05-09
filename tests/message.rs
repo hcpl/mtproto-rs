@@ -1,10 +1,10 @@
 #[macro_use]
 extern crate log;
+extern crate env_logger;
 extern crate mtproto;
 #[macro_use]
 extern crate pretty_assertions;
 extern crate serde_mtproto;
-extern crate test_logger;
 
 
 use std::thread::sleep;
@@ -14,8 +14,11 @@ use mtproto::rpc::{AppInfo, Message, Session};
 use mtproto::rpc::encryption::AuthKey;
 use mtproto::schema::FutureSalt;
 use serde_mtproto::MtProtoSized;
-use test_logger::ensure_env_logger_initialized;
 
+
+fn ensure_env_logger_initialized() {
+    env_logger::try_init().ok();  // Ignore if already initialized
+}
 
 #[test]
 fn test_plain_text() {

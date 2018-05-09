@@ -11,7 +11,7 @@ pub(crate) fn sha1_bytes(parts: &[&[u8]]) -> error::Result<Vec<u8>> {
         hasher.update(part)?;
     }
 
-    let bytes = hasher.finish2().map(|b| b.to_vec())?;
+    let bytes = hasher.finish().map(|b| b.to_vec())?;
 
     Ok(bytes)
 }

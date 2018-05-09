@@ -3,7 +3,7 @@
 use std::fmt;
 
 use byteorder::{LittleEndian, ByteOrder};
-use openssl::{bn, hash, rsa};
+use openssl::{bn, hash, pkey, rsa};
 use serde_bytes::ByteBuf;
 use serde_mtproto;
 
@@ -45,31 +45,28 @@ impl<'a> RsaRawPublicKeyRef<'a> {
 
 
 /// "Cooked" RSA key.
-pub struct RsaPublicKey(rsa::Rsa);
+pub struct RsaPublicKey(rsa::Rsa<pkey::Public>);
 
 impl fmt::Debug for RsaPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         struct RsaRepr<'a> {
-            n: Option<&'a bn::BigNumRef>,
-            e: Option<&'a bn::BigNumRef>,
+            n: &'a bn::BigNumRef,
+            e: &'a bn::BigNumRef,
         }
 
         impl<'a> fmt::Debug for RsaRepr<'a> {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let debug_option_big_num = |opt_big_num: Option<&bn::BigNumRef>| {
-                    match opt_big_num {
-                        Some(big_num) => match big_num.to_hex_str() {
-                            Ok(hex_str) => hex_str.to_lowercase(),
-                            Err(_) => big_num.to_vec().iter()
-                                .map(|byte| format!("{:02x}", byte)).collect::<String>(),
-                        },
-                        None => "(None)".to_owned(),
+                let debug_big_num = |big_num: &bn::BigNumRef| {
+                    match big_num.to_hex_str() {
+                        Ok(hex_str) => hex_str.to_lowercase(),
+                        Err(_) => big_num.to_vec().iter()
+                            .map(|byte| format!("{:02x}", byte)).collect::<String>(),
                     }
                 };
 
                 f.debug_struct("RsaRepr")
-                    .field("n", &DisplayStr(&debug_option_big_num(self.n)))
-                    .field("e", &DisplayStr(&debug_option_big_num(self.e)))
+                    .field("n", &DisplayStr(&debug_big_num(self.n)))
+                    .field("e", &DisplayStr(&debug_big_num(self.e)))
                     .finish()
             }
         }
@@ -98,8 +95,8 @@ impl RsaPublicKey {
     pub fn sha1_fingerprint(&self) -> error::Result<Vec<u8>> {
         let mut buf = Vec::new();
 
-        let n_bytes = self.0.n().ok_or(error::Error::from(ErrorKind::NoModulus))?.to_vec();
-        let e_bytes = self.0.e().ok_or(error::Error::from(ErrorKind::NoExponent))?.to_vec();
+        let n_bytes = self.0.n().to_vec();
+        let e_bytes = self.0.e().to_vec();
 
         // Need to allocate new space, so use `&mut buf` instead of `buf.as_mut_slice()`
         serde_mtproto::to_writer(&mut buf, &ByteBuf::from(n_bytes))?;
@@ -108,7 +105,7 @@ impl RsaPublicKey {
         let mut hasher = hash::Hasher::new(hash::MessageDigest::sha1())?;
         hasher.update(&buf)?;
 
-        Ok(hasher.finish2().map(|b| b.to_vec())?)
+        Ok(hasher.finish().map(|b| b.to_vec())?)
     }
 
     pub fn fingerprint(&self) -> error::Result<i64> {
@@ -124,7 +121,7 @@ impl RsaPublicKey {
         debug!("Padded input: {:?}", &padded_input);
 
         let mut output = [0; 256];
-        self.0.public_encrypt(&padded_input, &mut output, rsa::NO_PADDING)?;
+        self.0.public_encrypt(&padded_input, &mut output, rsa::Padding::NONE)?;
 
         Ok(output)
     }
@@ -136,8 +133,8 @@ impl RsaPublicKey {
         let padded_input = sha1_and_or_pad(input, true, Padding::Total255Random)?;
         debug!("Padded input: {:?}", &padded_input);
 
-        let n = self.0.n().ok_or(error::Error::from(ErrorKind::NoModulus))?;
-        let e = self.0.e().ok_or(error::Error::from(ErrorKind::NoExponent))?;
+        let n = self.0.n();
+        let e = self.0.e();
 
         let bn_padded_input = bn::BigNum::from_slice(&padded_input)?;
         let mut output = bn::BigNum::new()?;
@@ -180,7 +177,7 @@ pub fn calculate_auth_key(g: u32, dh_prime: &[u8], g_a: &[u8]) -> error::Result<
 
     loop {
         let mut b = bn::BigNum::new()?;
-        b.rand(2048, bn::MSB_MAYBE_ZERO, false)?;
+        b.rand(2048, bn::MsbOption::MAYBE_ZERO, false)?;
         let mut g_b = bn::BigNum::new()?;
         g_b.mod_exp(&g, &b, &dh_prime, &mut ctx)?;
         // .num_bytes() returns i32 and AUTH_KEY_SIZE is usize, so use u64 since it embraces

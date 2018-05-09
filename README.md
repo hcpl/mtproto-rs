@@ -6,7 +6,7 @@ implementation in Rust.
 Intended to provide low-level features to create a robust foundation for
 higher-level libraries such as `telegram-rs`.
 
-Supports Rust 1.19 and newer.
+Supports Rust 1.20 and newer.
 Older versions may work, but are not guaranteed to.
 
 
@@ -79,5 +79,5 @@ at your option.
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in Serde by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+for inclusion in MTProto-rs by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.

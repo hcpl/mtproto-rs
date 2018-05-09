@@ -49,7 +49,7 @@ fn collect_input() -> error::Result<String> {
 }
 
 fn run() -> error::Result<()> {
-    env_logger::init()?;
+    env_logger::try_init()?;
 
     let input = collect_input()?;
     let code = tl_codegen::generate_code_for(&input);

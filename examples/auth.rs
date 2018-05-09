@@ -262,7 +262,7 @@ fn all_auths(core: &Core) -> Box<Future<Item = (), Error = Void>> {
 }
 
 fn run() -> error::Result<()> {
-    env_logger::init()?;
+    env_logger::try_init()?;
     dotenv::dotenv().ok();  // Fail silently if no .env is present
     let mut core = Core::new()?;
 

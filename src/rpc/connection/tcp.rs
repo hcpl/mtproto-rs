@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
 use futures::{self, Future, IntoFuture};
-use log::LogLevel;
+use log;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
@@ -31,7 +31,7 @@ impl TcpConnection {
     pub fn new(handle: Handle, mode: TcpMode, server_addr: SocketAddr)
         -> Box<Future<Item = TcpConnection, Error = error::Error>>
     {
-        if log_enabled!(LogLevel::Info) {
+        if log_enabled!(log::Level::Info) {
             let mode_str = match mode {
                 TcpMode::Full => "full",
                 TcpMode::Intermediate => "intermediate",
