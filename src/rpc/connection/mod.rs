@@ -5,7 +5,6 @@ use hyper;
 use futures::{self, Future};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
-use tokio_core::reactor::Handle;
 
 use error;
 use rpc::{MessageType, Session};
@@ -53,35 +52,31 @@ pub enum Connection {
 }
 
 impl Connection {
-    pub fn new(handle: Handle, conn_config: ConnectionConfig)
-        -> Box<Future<Item = Connection, Error = error::Error>>
+    pub fn new(conn_config: ConnectionConfig)
+        -> Box<Future<Item = Connection, Error = error::Error> + Send>
     {
         match conn_config {
             ConnectionConfig::Tcp(tcp_mode, server_addr) => {
-                Box::new(TcpConnection::new(handle, tcp_mode, server_addr).map(Connection::Tcp))
+                Box::new(TcpConnection::new(tcp_mode, server_addr).map(Connection::Tcp))
             },
             ConnectionConfig::Http(server_addr) => {
-                Box::new(futures::future::ok(Connection::Http(HttpConnection::new(handle, server_addr))))
+                Box::new(futures::future::ok(Connection::Http(HttpConnection::new(server_addr))))
             },
         }
     }
 
-    pub fn default_with_handle(handle: Handle)
-        -> Box<Future<Item = Connection, Error = error::Error>>
-    {
-        Connection::tcp_default_with_handle(handle)
+    pub fn with_default_config() -> Box<Future<Item = Connection, Error = error::Error> + Send> {
+        Connection::tcp_with_default_config()
     }
 
-    pub fn tcp_default_with_handle(handle: Handle)
-        -> Box<Future<Item = Connection, Error = error::Error>>
+    pub fn tcp_with_default_config()
+        -> Box<Future<Item = Connection, Error = error::Error> + Send>
     {
-        Box::new(TcpConnection::default_with_handle(handle).map(|conn| {
-            Connection::Tcp(conn)
-        }))
+        Box::new(TcpConnection::with_default_config().map(Connection::Tcp))
     }
 
-    pub fn http_default_with_handle(handle: Handle) -> Connection {
-        Connection::Http(HttpConnection::default_with_handle(handle))
+    pub fn http_with_default_config() -> Connection {
+        Connection::Http(HttpConnection::with_default_config())
     }
 
     /// Delegates to `request()` methods of inner connection types.
@@ -90,9 +85,9 @@ impl Connection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-                        -> Box<Future<Item = (Connection, Session, U), Error = error::Error>>
-        where T: fmt::Debug + Serialize + TLObject,
-              U: fmt::Debug + DeserializeOwned + TLObject,
+                        -> Box<Future<Item = (Connection, Session, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         match self {
             Connection::Tcp(conn) => {

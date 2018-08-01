@@ -59,8 +59,6 @@ fn run() -> error::Result<()> {
     debug!("Successful write to {}", RUST_SCHEMA_FILE);
 
     Command::new("rustfmt")
-        .arg("--write-mode")
-        .arg("overwrite")
         .arg(RUST_SCHEMA_FILE)
         .status()?;
 

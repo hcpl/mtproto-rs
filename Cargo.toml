@@ -17,10 +17,11 @@ chrono = "0.4"
 crc = "1.5"
 envy = "0.3"
 erased-serde = "0.3"
-error-chain = "0.11"
+error-chain = "0.12"
 extprim = "1.4"
 futures = "0.1"
-hyper = "0.11"
+http = "0.1"
+hyper = "0.12"
 lazy_static = "1.0"
 log = "0.4"
 num-traits = "0.2"
@@ -32,21 +33,21 @@ serde_bytes = "0.10"
 serde_derive = "1.0"
 serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", features = ["extprim"] }
 serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto" }
-tokio-core = "0.1"
 tokio-io = "0.1"
+tokio-tcp = "0.1"
 toml = "0.4"
 
 [build-dependencies]
 env_logger = "0.5"
-error-chain = "0.11"
+error-chain = "0.12"
 log = "0.4"
 tl_codegen = { path = "tl_codegen" }
 
 [dev-dependencies]
-dotenv = "0.11"
+dotenv = "0.13"
 env_logger = "0.5"
 pretty_assertions = "0.5"
-void = "1.0"
+tokio = "0.1"
 
 [profile.dev]
 codegen-units = 16

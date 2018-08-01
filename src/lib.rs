@@ -10,6 +10,7 @@ extern crate erased_serde;
 extern crate error_chain;
 extern crate extprim;
 extern crate futures;
+extern crate http;
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
@@ -26,8 +27,8 @@ extern crate serde_derive;
 extern crate serde_mtproto;
 #[macro_use]
 extern crate serde_mtproto_derive;
-extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_tcp;
 extern crate toml;
 
 

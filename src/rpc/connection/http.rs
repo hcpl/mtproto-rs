@@ -2,15 +2,12 @@ use std::fmt;
 use std::str;
 
 use futures::{Future, IntoFuture, Stream};
-use hyper::{self, Client as HttpClient, Method as HttpMethod, Request as HttpRequest};
-use hyper::client::HttpConnector;
-use hyper::header;
+use hyper;
 use select::document::Document;
 use select::predicate::Name;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
-use tokio_core::reactor::Handle;
 
 use error::{self, ErrorKind};
 use rpc::{Message, MessageType, Session};
@@ -21,18 +18,18 @@ use super::HTTP_SERVER_ADDRS;
 
 #[derive(Debug)]
 pub struct HttpConnection {
-    http_client: HttpClient<HttpConnector>,
+    http_client: hyper::Client<hyper::client::HttpConnector>,
     server_addr: hyper::Uri,
 }
 
 impl HttpConnection {
-    pub fn new(handle: Handle, server_addr: hyper::Uri) -> HttpConnection {
+    pub fn new(server_addr: hyper::Uri) -> HttpConnection {
         info!("New HTTP connection to {}", &server_addr);
-        HttpConnection { http_client: HttpClient::new(&handle), server_addr }
+        HttpConnection { http_client: hyper::Client::new(), server_addr }
     }
 
-    pub fn default_with_handle(handle: Handle) -> HttpConnection {
-        HttpConnection::new(handle, HTTP_SERVER_ADDRS[0].clone())
+    pub fn with_default_config() -> HttpConnection {
+        HttpConnection::new(HTTP_SERVER_ADDRS[0].clone())
     }
 
     pub fn request<T, U>(self,
@@ -40,9 +37,9 @@ impl HttpConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-                        -> Box<Future<Item = (HttpConnection, Session, U), Error = error::Error>>
-        where T: fmt::Debug + Serialize + TLObject,
-              U: fmt::Debug + DeserializeOwned + TLObject,
+                        -> Box<Future<Item = (HttpConnection, Session, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
 
@@ -54,7 +51,7 @@ impl HttpConnection {
 
         let request_future = http_client
             .request(http_request)
-            .and_then(|res| res.body().concat2())
+            .and_then(|res| res.into_body().concat2())
             .map(|data| data.to_vec())
             .map_err(|err| err.into());
 
@@ -94,7 +91,7 @@ fn create_message<T>(session: &mut Session,
 
 fn create_http_request<T>(request_message: Message<T>,
                           server_addr: &hyper::Uri)
-                         -> error::Result<HttpRequest>
+                         -> error::Result<hyper::Request<hyper::Body>>
     where T: fmt::Debug + Serialize + TLObject
 {
     let serialized_message = serde_mtproto::to_bytes(&request_message)?;
@@ -102,17 +99,11 @@ fn create_http_request<T>(request_message: Message<T>,
     // Here we do mean to unwrap since it should fail if something goes wrong anyway
     assert_eq!(request_message.size_hint().unwrap(), serialized_message.len());
 
-    let mut request = HttpRequest::new(HttpMethod::Post, server_addr.clone());
-
-    {
-        let headers = request.headers_mut();
-        headers.set(header::Connection::keep_alive());
-        headers.set(header::ContentLength(serialized_message.len() as u64));
-    }
-
-    request.set_body(serialized_message);
-
-    Ok(request)
+    hyper::Request::post(server_addr)
+        .header(hyper::header::CONNECTION, "keep-alive")
+        .header(hyper::header::CONTENT_LENGTH, serialized_message.len())
+        .body(serialized_message.into())
+        .map_err(Into::into)
 }
 
 fn parse_response<U>(session: &Session,

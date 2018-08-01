@@ -9,7 +9,6 @@ use futures::Future;
 use serde::ser::Serialize;
 use serde::de::{DeserializeSeed, DeserializeOwned};
 use serde_mtproto::{Boxed, Identifiable, MtProtoSized, WithSize};
-use tokio_core::reactor::Handle;
 
 use error::{self, ErrorKind};
 use manual_types::Object;
@@ -83,10 +82,10 @@ impl Session {
         }
     }
 
-    pub fn connect(self, handle: Handle, conn_config: ConnectionConfig)
-        -> Box<Future<Item = SessionConnection, Error = error::Error>>
+    pub fn connect(self, conn_config: ConnectionConfig)
+        -> Box<Future<Item = SessionConnection, Error = error::Error> + Send>
     {
-        Box::new(Connection::new(handle, conn_config).map(move |conn| {
+        Box::new(Connection::new(conn_config).map(move |conn| {
             SessionConnection::new(self, conn)
         }))
     }
@@ -266,9 +265,9 @@ impl SessionConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-        -> Box<Future<Item = (SessionConnection, U), Error = error::Error>>
-        where T: fmt::Debug + Serialize + TLObject,
-              U: fmt::Debug + DeserializeOwned + TLObject,
+        -> Box<Future<Item = (SessionConnection, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         let SessionConnection { session, conn } = self;
         let request = conn.request(session, request_data, request_message_type, response_message_type);

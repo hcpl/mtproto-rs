@@ -9,9 +9,8 @@ use log;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle;
 use tokio_io;
+use tokio_tcp::TcpStream;
 
 use error::{self, ErrorKind};
 use rpc::{Message, MessageType, Session};
@@ -28,8 +27,8 @@ pub struct TcpConnection {
 }
 
 impl TcpConnection {
-    pub fn new(handle: Handle, mode: TcpMode, server_addr: SocketAddr)
-        -> Box<Future<Item = TcpConnection, Error = error::Error>>
+    pub fn new(mode: TcpMode, server_addr: SocketAddr)
+        -> Box<Future<Item = TcpConnection, Error = error::Error> + Send>
     {
         if log_enabled!(log::Level::Info) {
             let mode_str = match mode {
@@ -41,15 +40,15 @@ impl TcpConnection {
             info!("New TCP connection in {} mode to {}", mode_str, server_addr);
         }
 
-        Box::new(TcpStream::connect(&server_addr, &handle).map(move |socket| {
+        Box::new(TcpStream::connect(&server_addr).map(move |socket| {
             TcpConnection { socket, mode_handler: TcpModeHandler::from(mode), server_addr }
         }).map_err(Into::into))
     }
 
-    pub fn default_with_handle(handle: Handle)
-        -> Box<Future<Item = TcpConnection, Error = error::Error>>
+    pub fn with_default_config()
+        -> Box<Future<Item = TcpConnection, Error = error::Error> + Send>
     {
-        TcpConnection::new(handle, TcpMode::Full, TCP_SERVER_ADDRS[0])
+        TcpConnection::new(TcpMode::Full, TCP_SERVER_ADDRS[0])
     }
 
     pub fn request<T, U>(self,
@@ -57,9 +56,9 @@ impl TcpConnection {
                          request_data: T,
                          request_message_type: MessageType,
                          response_message_type: MessageType)
-                        -> Box<Future<Item = (TcpConnection, Session, U), Error = error::Error>>
-        where T: fmt::Debug + Serialize + TLObject,
-              U: fmt::Debug + DeserializeOwned + TLObject,
+                        -> Box<Future<Item = (TcpConnection, Session, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         let request_message = tryf!(create_message(&mut session, request_data, request_message_type));
 
@@ -164,7 +163,7 @@ impl From<TcpMode> for TcpModeHandler {
 
 trait MtProtoTcpMode {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject;
 }
 
@@ -182,7 +181,7 @@ impl FullModeHandler {
 
 impl MtProtoTcpMode for FullModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject
     {
         let size = tryf!(message.size_hint()) + 12;  // FIXME: Can overflow on 32-bit systems
@@ -208,7 +207,7 @@ impl MtProtoTcpMode for FullModeHandler {
         let response = request.and_then(|(socket, _request_bytes)| {
             tokio_io::io::read_exact(socket, [0; 8])
         }).then(|result|
-            -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+            -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         {
             let (socket, first_bytes) = tryf!(result);
 
@@ -261,7 +260,7 @@ impl IntermediateModeHandler {
 
 impl MtProtoTcpMode for IntermediateModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject
     {
         let size = tryf!(message.size_hint());
@@ -276,7 +275,7 @@ impl MtProtoTcpMode for IntermediateModeHandler {
             bailf!(ErrorKind::MessageTooLong(size));
         };
 
-        let init: Box<Future<Item = (TcpStream, &'static [u8]), Error = io::Error>> = if self.is_first_request {
+        let init: Box<Future<Item = (TcpStream, &'static [u8]), Error = io::Error> + Send> = if self.is_first_request {
             self.is_first_request = false;
             Box::new(tokio_io::io::write_all(socket, b"\xee\xee\xee\xee".as_ref()))
         } else {
@@ -312,7 +311,7 @@ impl AbridgedModeHandler {
 
 impl MtProtoTcpMode for AbridgedModeHandler {
     fn request<T>(&mut self, socket: TcpStream, message: Message<T>)
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error>>
+        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject
     {
         let size_div_4 = tryf!(message.size_hint()) / 4;  // div 4 required for abridged mode
@@ -353,7 +352,7 @@ impl MtProtoTcpMode for AbridgedModeHandler {
         let response = request.and_then(|(socket, _request_bytes)| {
             tokio_io::io::read_exact(socket, [0; 1])
         }).and_then(|(socket, byte_id)| {
-            let boxed: Box<Future<Item = (TcpStream, usize), Error = io::Error>> = if byte_id == [0x7f] {
+            let boxed: Box<Future<Item = (TcpStream, usize), Error = io::Error> + Send> = if byte_id == [0x7f] {
                 Box::new(tokio_io::io::read_exact(socket, [0; 3]).map(|(socket, bytes_len)| {
                     let len = LittleEndian::read_uint(&bytes_len, 3) as usize * 4;
                     (socket, len)

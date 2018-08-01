@@ -8,6 +8,7 @@ error_chain! {
     foreign_links {
         Envy(::envy::Error);
         FromUtf8(::std::string::FromUtf8Error);
+        Http(::http::Error);
         Hyper(::hyper::Error);
         Io(::std::io::Error);
         OpenSsl(::openssl::error::ErrorStack);

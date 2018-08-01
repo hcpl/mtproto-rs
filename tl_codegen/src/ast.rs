@@ -391,9 +391,14 @@ impl Constructor {
             id_attr = Some(syn::Attribute {
                 // Docs for syn 0.11.11 contain a bug: we need Outer for #[..], not Inner
                 style: syn::AttrStyle::Outer,
-                value: syn::MetaItem::NameValue(
-                    syn::Ident::new("id"),
-                    syn::Lit::Str(format!("0x{:08x}", tl_id), syn::StrStyle::Cooked),
+                value: syn::MetaItem::List(
+                    syn::Ident::new("mtproto_identifiable"),
+                    vec![
+                        syn::NestedMetaItem::MetaItem(syn::MetaItem::NameValue(
+                            syn::Ident::new("id"),
+                            syn::Lit::Str(format!("0x{:08x}", tl_id), syn::StrStyle::Cooked),
+                        )),
+                    ],
                 ),
                 is_sugared_doc: false,
             });
@@ -439,9 +444,14 @@ impl Constructor {
             let id_attr = syn::Attribute {
                 // Docs for syn 0.11.11 contain a bug: we need Outer for #[..], not Inner
                 style: syn::AttrStyle::Outer,
-                value: syn::MetaItem::NameValue(
-                    syn::Ident::new("id"),
-                    syn::Lit::Str(format!("0x{:08x}", tl_id), syn::StrStyle::Cooked),
+                value: syn::MetaItem::List(
+                    syn::Ident::new("mtproto_identifiable"),
+                    vec![
+                        syn::NestedMetaItem::MetaItem(syn::MetaItem::NameValue(
+                            syn::Ident::new("id"),
+                            syn::Lit::Str(format!("0x{:08x}", tl_id), syn::StrStyle::Cooked),
+                        )),
+                    ],
                 ),
                 is_sugared_doc: false,
             };

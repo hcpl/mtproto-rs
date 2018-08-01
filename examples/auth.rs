@@ -12,8 +12,7 @@ extern crate mtproto;
 extern crate rand;
 extern crate serde;
 extern crate serde_mtproto;
-extern crate tokio_core;
-extern crate void;
+extern crate tokio;
 
 
 use byteorder::{BigEndian, ByteOrder};
@@ -24,9 +23,6 @@ use mtproto::rpc::session::SessionConnection;
 use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS, ConnectionConfig, TcpMode};
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
-use rand::{Rng, ThreadRng};
-use tokio_core::reactor::{Core, Handle};
-use void::Void;
 
 
 mod error {
@@ -69,40 +65,41 @@ macro_rules! tryf {
 
 
 macro_rules! unpack {
-    ($auth_step:ident ($($tt:tt),*)) => {
-        |($($tt),*)| $auth_step($($tt),*)
-    }
+    ($func:ident ($($args:ident,)*)) => {
+        |($($args,)*)| $func($($args),*)
+    };
+
+    ($func:ident ($($args:ident),*)) => {
+        unpack!($func($($args,)*))
+    };
 }
 
 /// Initializes session and combines all authorization steps defined below.
-fn auth(handle: Handle, conn_config: ConnectionConfig) -> Box<Future<Item = (), Error = error::Error>> {
+fn auth(conn_config: ConnectionConfig) -> Box<Future<Item = (), Error = error::Error> + Send> {
     let app_info = tryf!(fetch_app_info());
-    let mut rng = rand::thread_rng();
 
-    let session = Session::new(rng.gen(), app_info);
-    let session_conn = session.connect(handle, conn_config).map_err(Into::<error::Error>::into);
+    let session = Session::new(rand::random(), app_info);
+    let session_conn = session.connect(conn_config).map_err(Into::<error::Error>::into);
 
     let auth_future = session_conn
-        .map(|sconn| (sconn, rng))
-        .and_then(unpack!(auth_step1(session_conn, rng)))
-        .and_then(unpack!(auth_step2(session_conn, response, rng, nonce)))
-        .and_then(unpack!(auth_step3(session_conn, response, rng)));
+        .map(|sconn| (sconn,))
+        .and_then(unpack!(auth_step1(session_conn)))
+        .and_then(unpack!(auth_step2(session_conn, response, nonce)))
+        .and_then(unpack!(auth_step3(session_conn, response)));
 
     Box::new(auth_future)
 }
 
 
 /// Step 1: DH exchange initiation using PQ request
-fn auth_step1(session_conn: SessionConnection,
-              mut rng: ThreadRng)
+fn auth_step1(session_conn: SessionConnection)
     -> Box<Future<Item = (
            SessionConnection,
            schema::ResPQ,
-           ThreadRng,
            i128::i128,
-       ), Error = error::Error>>
+       ), Error = error::Error> + Send>
 {
-    let nonce = rng.gen();
+    let nonce = rand::random();
     let req_pq = schema::rpc::req_pq {
         nonce: nonce,
     };
@@ -111,20 +108,18 @@ fn auth_step1(session_conn: SessionConnection,
     let request = session_conn.request(req_pq, MessageType::PlainText, MessageType::PlainText);
 
     Box::new(request.map(move |(session_conn, response)| {
-        (session_conn, response, rng, nonce)
+        (session_conn, response, nonce)
     }).map_err(Into::into))
 }
 
 /// Step 2: Presenting PQ proof of work & server authentication
 fn auth_step2(session: SessionConnection,
               res_pq: schema::ResPQ,
-              mut rng: ThreadRng,
               nonce: i128::i128)
     -> Box<Future<Item = (
            SessionConnection,
            schema::Server_DH_Params,
-           ThreadRng,
-       ), Error = error::Error>>
+       ), Error = error::Error> + Send>
 {
     info!("Received PQ response: {:#?}", res_pq);
 
@@ -150,7 +145,7 @@ fn auth_step2(session: SessionConnection,
         q: q.clone().into(),
         nonce: res_pq.nonce,
         server_nonce: res_pq.server_nonce,
-        new_nonce: rng.gen(),
+        new_nonce: rand::random(),
     });
     info!("PQ proof of work to be sent: {:#?}", &p_q_inner_data);
 
@@ -190,9 +185,7 @@ fn auth_step2(session: SessionConnection,
     info!("Sending DH key exchange request: {:?}", req_dh_params);
     let request = session.request(req_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-    Box::new(request.map(move |(session, response)| {
-        (session, response, rng)
-    }).map_err(Into::into))
+    Box::new(request.map_err(Into::into))
 }
 
 /// Step 3: DH key exchange complete
@@ -200,9 +193,8 @@ fn auth_step2(session: SessionConnection,
 /// Should be this but step 2 in this implementation always ends with
 /// 404 Not Found, so this is left empty for investigations.
 fn auth_step3(_session: SessionConnection,
-              server_dh_params: schema::Server_DH_Params,
-              _rng: ThreadRng)
-    -> Box<Future<Item = (), Error = error::Error>>
+              server_dh_params: schema::Server_DH_Params)
+    -> Box<Future<Item = (), Error = error::Error> + Send>
 {
     info!("Received server DH parameters: {:#?}", server_dh_params);
 
@@ -217,7 +209,7 @@ fn auth_step3(_session: SessionConnection,
 /// * `AppInfo.toml` file with `api_id` and `api_hash` fields.
 fn fetch_app_info() -> error::Result<AppInfo> {
     AppInfo::from_env().or_else(|from_env_err| {
-        AppInfo::read_from_toml_file("AppInfo.toml").map_err(|read_toml_err| {
+        AppInfo::from_toml_file("AppInfo.toml").map_err(|read_toml_err| {
             from_env_err.chain_err(|| read_toml_err)
         })
     }).chain_err(|| {
@@ -227,12 +219,12 @@ fn fetch_app_info() -> error::Result<AppInfo> {
 }
 
 
-fn all_auths(core: &Core) -> Box<Future<Item = (), Error = Void>> {
-    let mut futures: Vec<Box<Future<Item = (), Error = Void>>> = vec![];
+fn all_auths() -> Box<Future<Item = (), Error = ()> + Send> {
+    let mut futures: Vec<Box<Future<Item = (), Error = ()> + Send>> = vec![];
 
     macro_rules! add_auth_future {
         ($($tt:tt)+) => {
-            let auth_future = auth(core.handle(), $($tt)+).map(|_| $($tt)+).map_err(|e| ($($tt)+, e));
+            let auth_future = auth($($tt)+).map(|_| $($tt)+).map_err(|e| ($($tt)+, e));
             let processed_auth_future = auth_future.then(|result| {
                 let conn_type_text = |conn_config| match conn_config {
                     ConnectionConfig::Tcp(TcpMode::Abridged, _) => "tcp-abridged",
@@ -261,15 +253,8 @@ fn all_auths(core: &Core) -> Box<Future<Item = (), Error = Void>> {
     Box::new(futures::stream::futures_unordered(futures).for_each(|_| Ok(())))
 }
 
-fn run() -> error::Result<()> {
-    env_logger::try_init()?;
+fn main() {
+    env_logger::init();
     dotenv::dotenv().ok();  // Fail silently if no .env is present
-    let mut core = Core::new()?;
-
-    let all_auths_future = all_auths(&core);
-    core.run(all_auths_future).unwrap();  // The error is void
-
-    Ok(())
+    tokio::run(all_auths());
 }
-
-quick_main!(run);
