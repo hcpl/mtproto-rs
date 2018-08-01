@@ -20,7 +20,7 @@ use extprim::i128;
 use futures::{Future, Stream};
 use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::session::SessionConnection;
-use mtproto::rpc::connection::{HTTP_SERVER_ADDRS, TCP_SERVER_ADDRS, ConnectionConfig, TcpMode};
+use mtproto::rpc::connection::ConnectionConfig;
 use mtproto::rpc::encryption::asymm;
 use mtproto::schema;
 
@@ -237,9 +237,9 @@ fn main() {
     dotenv::dotenv().ok();  // Fail silently if no .env is present
 
     tokio::run(futures::stream::futures_unordered(vec![
-        processed_auth(ConnectionConfig::Tcp(TcpMode::Abridged,     TCP_SERVER_ADDRS[0]), "tcp-abridged"),
-        processed_auth(ConnectionConfig::Tcp(TcpMode::Intermediate, TCP_SERVER_ADDRS[0]), "tcp-intermediate"),
-        processed_auth(ConnectionConfig::Tcp(TcpMode::Full,         TCP_SERVER_ADDRS[0]), "tcp-full"),
-        processed_auth(ConnectionConfig::Http(HTTP_SERVER_ADDRS[0].clone()), "http"),
+        processed_auth(ConnectionConfig::tcp_abridged_with_default_config(), "tcp-abridged"),
+        processed_auth(ConnectionConfig::tcp_intermediate_with_default_config(), "tcp-intermediate"),
+        processed_auth(ConnectionConfig::tcp_full_with_default_config(), "tcp-full"),
+        processed_auth(ConnectionConfig::http_with_default_config(), "http"),
     ]).for_each(|_| Ok(())));
 }

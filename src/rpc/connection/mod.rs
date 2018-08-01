@@ -108,3 +108,21 @@ pub enum ConnectionConfig {
     Tcp(TcpMode, SocketAddr),
     Http(hyper::Uri),
 }
+
+impl ConnectionConfig {
+    pub fn tcp_abridged_with_default_config() -> ConnectionConfig {
+        ConnectionConfig::Tcp(TcpMode::Abridged, TCP_SERVER_ADDRS[0])
+    }
+
+    pub fn tcp_intermediate_with_default_config() -> ConnectionConfig {
+        ConnectionConfig::Tcp(TcpMode::Intermediate, TCP_SERVER_ADDRS[0])
+    }
+
+    pub fn tcp_full_with_default_config() -> ConnectionConfig {
+        ConnectionConfig::Tcp(TcpMode::Full, TCP_SERVER_ADDRS[0])
+    }
+
+    pub fn http_with_default_config() -> ConnectionConfig {
+        ConnectionConfig::Http(HTTP_SERVER_ADDRS[0].clone())
+    }
+}
