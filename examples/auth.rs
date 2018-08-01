@@ -219,42 +219,27 @@ fn fetch_app_info() -> error::Result<AppInfo> {
 }
 
 
-fn all_auths() -> Box<Future<Item = (), Error = ()> + Send> {
-    let mut futures: Vec<Box<Future<Item = (), Error = ()> + Send>> = vec![];
+fn processed_auth(config: ConnectionConfig, tag: &'static str)
+    -> Box<Future<Item = (), Error = ()> + Send>
+{
+    Box::new(auth(config).then(move |res| {
+        match res {
+            Ok(()) => println!("Success ({})", tag),
+            Err(e) => println!("{} ({})", e, tag),
+        }
 
-    macro_rules! add_auth_future {
-        ($($tt:tt)+) => {
-            let auth_future = auth($($tt)+).map(|_| $($tt)+).map_err(|e| ($($tt)+, e));
-            let processed_auth_future = auth_future.then(|result| {
-                let conn_type_text = |conn_config| match conn_config {
-                    ConnectionConfig::Tcp(TcpMode::Abridged, _) => "tcp-abridged",
-                    ConnectionConfig::Tcp(TcpMode::Intermediate, _) => "tcp-intermediate",
-                    ConnectionConfig::Tcp(TcpMode::Full, _) => "tcp-full",
-                    ConnectionConfig::Http(_) => "http",
-                };
-
-                match result {
-                    Ok(conn_config) => println!("Success ({})", conn_type_text(conn_config)),
-                    Err((conn_config, e)) => println!("{} ({})", e, conn_type_text(conn_config)),
-                }
-
-                Ok(())
-            });
-
-            futures.push(Box::new(processed_auth_future))
-        };
-    }
-
-    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Abridged,     TCP_SERVER_ADDRS[0]));
-    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Intermediate, TCP_SERVER_ADDRS[0]));
-    add_auth_future!(ConnectionConfig::Tcp(TcpMode::Full,         TCP_SERVER_ADDRS[0]));
-    add_auth_future!(ConnectionConfig::Http(HTTP_SERVER_ADDRS[0].clone()));
-
-    Box::new(futures::stream::futures_unordered(futures).for_each(|_| Ok(())))
+        Ok(())
+    }))
 }
 
 fn main() {
     env_logger::init();
     dotenv::dotenv().ok();  // Fail silently if no .env is present
-    tokio::run(all_auths());
+
+    tokio::run(futures::stream::futures_unordered(vec![
+        processed_auth(ConnectionConfig::Tcp(TcpMode::Abridged,     TCP_SERVER_ADDRS[0]), "tcp-abridged"),
+        processed_auth(ConnectionConfig::Tcp(TcpMode::Intermediate, TCP_SERVER_ADDRS[0]), "tcp-intermediate"),
+        processed_auth(ConnectionConfig::Tcp(TcpMode::Full,         TCP_SERVER_ADDRS[0]), "tcp-full"),
+        processed_auth(ConnectionConfig::Http(HTTP_SERVER_ADDRS[0].clone()), "http"),
+    ]).for_each(|_| Ok(())));
 }
