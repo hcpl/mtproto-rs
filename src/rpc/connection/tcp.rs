@@ -130,9 +130,18 @@ fn parse_response<U>(session: &Session,
         MessageType::Encrypted => Some((len - 24) as u32),
     };
 
-    let response_message = session.process_message(response_bytes, encrypted_data_len)?;
+    if let Some(variant_names) = U::all_enum_variant_names() {
+        // FIXME: Lossy error management
+        for vname in variant_names {
+            if let Ok(msg) = session.process_message(response_bytes, encrypted_data_len, &[vname]) {
+                return Ok(msg);
+            }
+        }
 
-    Ok(response_message)
+        bail!(ErrorKind::BadTcpMessage(len));
+    } else {
+        session.process_message(response_bytes, encrypted_data_len, &[])
+    }
 }
 
 

@@ -238,12 +238,16 @@ impl Session {
     }
 
     /// Reads a `Message` from raw bytes.
-    pub fn process_message<T>(&self, message_bytes: &[u8], encrypted_data_len: Option<u32>) -> error::Result<Message<T>>
+    pub fn process_message<T>(&self,
+                              message_bytes: &[u8],
+                              encrypted_data_len: Option<u32>,
+                              enum_variant_ids: &[&'static str])
+        -> error::Result<Message<T>>
         where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized
     {
         use serde_mtproto::Deserializer;
 
-        let mut deserializer = Deserializer::new(message_bytes, &[]);
+        let mut deserializer = Deserializer::new(message_bytes, enum_variant_ids);
         let seed = MessageSeed::new(self.auth_key.clone(), encrypted_data_len);
 
         seed.deserialize(&mut deserializer).map_err(Into::into)

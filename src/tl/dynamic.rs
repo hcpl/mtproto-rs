@@ -61,6 +61,10 @@ impl<'a> Identifiable for &'a TLObject {
         panic!("Cannot use static methods on trait objects")
     }
 
+    fn all_enum_variant_names() -> Option<&'static [&'static str]> {
+        panic!("Cannot use static methods on trait objects")
+    }
+
     fn type_id(&self) -> u32 {
         (**self).type_id()
     }
@@ -80,6 +84,10 @@ impl Clone for Box<TLObject> {
 
 impl Identifiable for Box<TLObject> {
     fn all_type_ids() -> &'static [u32] {
+        panic!("Cannot use static methods on trait objects")
+    }
+
+    fn all_enum_variant_names() -> Option<&'static [&'static str]> {
         panic!("Cannot use static methods on trait objects")
     }
 
