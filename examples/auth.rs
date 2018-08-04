@@ -19,6 +19,7 @@ extern crate tokio;
 use byteorder::{BigEndian, ByteOrder};
 use extprim::i128;
 use futures::{Future, Stream};
+use mtproto::I256;
 use mtproto::rpc::{AppInfo, MessageType, Session};
 use mtproto::rpc::session::SessionConnection;
 use mtproto::rpc::connection::ConnectionConfig;
@@ -130,7 +131,7 @@ fn auth_step2(session: SessionConnection,
            schema::Server_DH_Params,
            i128::i128,
            i128::i128,
-           (i128::i128, i128::i128),
+           I256,
        ), Error = error::Error> + Send>
 {
     info!("Received PQ response: {:#?}", res_pq);
@@ -213,13 +214,13 @@ fn auth_step3(session: SessionConnection,
               server_dh_params: schema::Server_DH_Params,
               nonce: i128::i128,
               server_nonce: i128::i128,
-              new_nonce: (i128::i128, i128::i128))
+              new_nonce: I256)
     -> Box<Future<Item = (
            SessionConnection,
            schema::Set_client_DH_params_answer,
            i128::i128,
            i128::i128,
-           (i128::i128, i128::i128),
+           I256,
        ), Error = error::Error> + Send>
 {
     info!("Received server DH parameters: {:#?}", server_dh_params);
@@ -241,12 +242,12 @@ fn auth_step3(session: SessionConnection,
                 buf
             }
 
-            fn little_endian_i256_to_bytes(n: (i128::i128, i128::i128)) -> [u8; 32] {
+            fn little_endian_i256_to_bytes(n: I256) -> [u8; 32] {
                 let mut buf = [0; 32];
-                LittleEndian::write_u64(&mut buf[0..8], n.0.low64());
-                LittleEndian::write_i64(&mut buf[8..16], n.0.high64());
-                LittleEndian::write_u64(&mut buf[16..24], n.1.low64());
-                LittleEndian::write_i64(&mut buf[24..32], n.1.high64());
+                LittleEndian::write_u64(&mut buf[0..8], n.low128().low64());
+                LittleEndian::write_u64(&mut buf[8..16], n.low128().high64());
+                LittleEndian::write_u64(&mut buf[16..24], n.high128().low64());
+                LittleEndian::write_i64(&mut buf[24..32], n.high128().high64());
                 buf
             }
 
@@ -325,7 +326,7 @@ fn auth_step4(_session: SessionConnection,
               set_client_dh_params_answer: schema::Set_client_DH_params_answer,
               _nonce: i128::i128,
               _server_nonce: i128::i128,
-              _new_nonce: (i128::i128, i128::i128))
+              _new_nonce: I256)
     -> Box<Future<Item = (), Error = error::Error> + Send>
 {
     info!("Received server DH verification: {:#?}", set_client_dh_params_answer);
