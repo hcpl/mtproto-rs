@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate arrayref;
 extern crate byteorder;
 extern crate chrono;
 extern crate dotenv;
@@ -48,7 +50,39 @@ mod error {
         errors {
             NonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
                 description("nonce mismatch")
-                display("nonce mismatch (expected {}, found {})", expected, found)
+                display("nonce mismatch (expected {:x}, found {:x})", expected, found)
+            }
+
+            ServerNonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
+                description("server nonce mismatch")
+                display("server nonce mismatch (expected {:x}, found {:x})", expected, found)
+            }
+
+            NewNonceHashMismatch(
+                expected_new_nonce: ::mtproto::I256,
+                found_hash: ::extprim::i128::i128
+            ) {
+                description("new nonce hash mismatch")
+                display("new nonce hash mismatch (expected new nonce = {:x}, found hash {:x})",
+                    expected_new_nonce, found_hash)
+            }
+
+            NewNonceDerivedHashMismatch(
+                expected_new_nonce: ::mtproto::I256,
+                marker: u8,
+                aux_hash: [u8; 8],
+                found_hash: ::extprim::i128::i128
+            ) {
+                description("new nonce derived hash mismatch")
+                display(
+                    "new nonce derived hash mismatch \
+                     (expected new nonce = {:x}, marker = {}, auth key aux hash = {:?}; found hash {:x})",
+                    expected_new_nonce, marker, aux_hash, found_hash)
+            }
+
+            Sha1Mismatch(expected: Vec<u8>, found: Vec<u8>) {
+                description("SHA1 hash mismatch")
+                display("SHA1 hash mismatch (expected {:?}, found {:?})", expected, found)
             }
 
             ServerDHParamsFail {
@@ -93,7 +127,9 @@ macro_rules! unpack {
 }
 
 /// Initializes session and combines all authorization steps defined below.
-fn auth(conn_config: ConnectionConfig) -> Box<Future<Item = (), Error = error::Error> + Send> {
+fn auth(conn_config: ConnectionConfig)
+    -> Box<Future<Item = (Vec<u8>, i32), Error = error::Error> + Send>
+{
     let app_info = tryf!(fetch_app_info());
 
     let session = Session::new(rand::random(), app_info);
@@ -104,7 +140,7 @@ fn auth(conn_config: ConnectionConfig) -> Box<Future<Item = (), Error = error::E
         .and_then(unpack!(auth_step1(session_conn)))
         .and_then(unpack!(auth_step2(session_conn, response, nonce)))
         .and_then(unpack!(auth_step3(session_conn, response, nonce, server_nonce, new_nonce)))
-        .and_then(unpack!(auth_step4(session_conn, response, nonce, server_nonce, new_nonce, auth_key, time_offset)));
+        .and_then(unpack!(auth_step4(response, nonce, server_nonce, new_nonce, auth_key, time_offset)));
 
     Box::new(auth_future)
 }
@@ -119,9 +155,7 @@ fn auth_step1(session_conn: SessionConnection)
        ), Error = error::Error> + Send>
 {
     let nonce = rand::random();
-    let req_pq = schema::rpc::req_pq {
-        nonce: nonce,
-    };
+    let req_pq = schema::rpc::req_pq { nonce };
 
     info!("Sending PQ request: {:#?}", req_pq);
     let request = session_conn.request(req_pq, MessageType::PlainText, MessageType::PlainText);
@@ -145,9 +179,7 @@ fn auth_step2(session: SessionConnection,
 {
     info!("Received PQ response: {:#?}", res_pq);
 
-    if nonce != res_pq.nonce {
-        bailf!(ErrorKind::NonceMismatch(nonce, res_pq.nonce));
-    }
+    tryf!(check_nonce(nonce, res_pq.nonce));
 
     let pq_u64 = BigEndian::read_u64(&res_pq.pq);
     debug!("Decomposing pq = {}...", pq_u64);
@@ -225,7 +257,6 @@ fn auth_step3(session: SessionConnection,
               server_nonce: i128::i128,
               new_nonce: I256)
     -> Box<Future<Item = (
-           SessionConnection,
            schema::Set_client_DH_params_answer,
            i128::i128,
            i128::i128,
@@ -240,11 +271,18 @@ fn auth_step3(session: SessionConnection,
         schema::Server_DH_Params::server_DH_params_fail(server_dh_params_fail) => {
             error!("DH request failed: {:?}", server_dh_params_fail);
 
+            tryf!(check_nonce(nonce, server_dh_params_fail.nonce));
+            tryf!(check_server_nonce(server_nonce, server_dh_params_fail.server_nonce));
+            tryf!(check_new_nonce_hash(new_nonce, server_dh_params_fail.new_nonce_hash));
+
             Box::new(futures::future::err(ErrorKind::ServerDHParamsFail.into()))
         },
         schema::Server_DH_Params::server_DH_params_ok(server_dh_params_ok) => {
-            let server_nonce_bytes = little_endian_i128_to_bytes(server_nonce);
-            let new_nonce_bytes = little_endian_i256_to_bytes(new_nonce);
+            tryf!(check_nonce(nonce, server_dh_params_ok.nonce));
+            tryf!(check_server_nonce(server_nonce, server_dh_params_ok.server_nonce));
+
+            let server_nonce_bytes = little_endian_i128_into_array(server_nonce);
+            let new_nonce_bytes = little_endian_i256_into_array(new_nonce);
 
             let hash1 = tryf!(sha1_from_bytes(&[&new_nonce_bytes, &server_nonce_bytes]));
             let hash2 = tryf!(sha1_from_bytes(&[&server_nonce_bytes, &new_nonce_bytes]));
@@ -260,51 +298,62 @@ fn auth_step3(session: SessionConnection,
 
             // Key is 256-bit => can unwrap safely
             let aes_decrypt_key = aes::AesKey::new_decrypt(&tmp_aes_key).unwrap();
-            let mut decrypted_answer = vec![0; server_dh_params_ok.encrypted_answer.len()];
-            aes::aes_ige(server_dh_params_ok.encrypted_answer.as_ref(), decrypted_answer.as_mut_slice(), &aes_decrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Decrypt);
+            let mut server_dh_inner_decrypted = vec![0; server_dh_params_ok.encrypted_answer.len()];
+            aes::aes_ige(server_dh_params_ok.encrypted_answer.as_ref(), server_dh_inner_decrypted.as_mut_slice(), &aes_decrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Decrypt);
 
             const SHA1_HASH_LENGTH: usize = 20;
-            let (answer_server_hash, answer_bytes) = decrypted_answer.split_at(SHA1_HASH_LENGTH);
-            let (answer, random_tail) = tryf!(serde_mtproto::from_bytes_reuse::<Boxed<schema::Server_DH_inner_data>>(answer_bytes, &[]));
-            let answer_len = answer_bytes.len() - random_tail.len();
-            let answer_client_hash = tryf!(sha1_from_bytes(&[&answer_bytes[0..answer_len]]));
-            assert_eq!(answer_server_hash, answer_client_hash.as_ref());
+            let (server_dh_inner_server_hash, server_dh_inner_bytes) =
+                server_dh_inner_decrypted.split_at(SHA1_HASH_LENGTH);
+            let (server_dh_inner, random_tail) =
+                tryf!(serde_mtproto::from_bytes_reuse::<Boxed<schema::Server_DH_inner_data>>(server_dh_inner_bytes, &[]));
 
-            let g = tryf!(bn::BigNum::from_u32(answer.inner().g as u32));
+            let server_dh_inner_len = server_dh_inner_bytes.len() - random_tail.len();
+            let server_dh_inner_client_hash =
+                tryf!(sha1_from_bytes(&[&server_dh_inner_bytes[0..server_dh_inner_len]]));
+            tryf!(check_sha1(server_dh_inner_server_hash, &server_dh_inner_client_hash));
+
+            let server_dh_inner = server_dh_inner.into_inner();
+            tryf!(check_nonce(nonce, server_dh_inner.nonce));
+            tryf!(check_server_nonce(server_nonce, server_dh_inner.server_nonce));
+
+            // TODO: check that `dh_prime` is actually prime
+            // TODO: check that `g` is a quadratic residue modulo `p`
+
+            let g = tryf!(bn::BigNum::from_u32(server_dh_inner.g as u32));
             let mut b = tryf!(bn::BigNum::new());
             tryf!(b.rand(2048, bn::MsbOption::ONE, true));
-            let dh_prime = tryf!(bn::BigNum::from_slice(&*answer.inner().dh_prime));
+            let dh_prime = tryf!(bn::BigNum::from_slice(&server_dh_inner.dh_prime));
             let mut g_b = tryf!(bn::BigNum::new());
             let mut ctx = tryf!(bn::BigNumContext::new());
             tryf!(g_b.mod_exp(&g, &b, &dh_prime, &mut ctx));
 
-            let client_dh_inner_data = Boxed::new(schema::Client_DH_Inner_Data {
+            let client_dh_inner = Boxed::new(schema::Client_DH_Inner_Data {
                 nonce,
                 server_nonce,
                 retry_id: 0,  // TODO: actual retry ID
                 g_b: g_b.to_vec().into(),
             });
 
-            let client_dh_inner_data_len = tryf!(client_dh_inner_data.size_hint());
-            let random_tail_len = (16 - ((SHA1_HASH_LENGTH + client_dh_inner_data_len) % 16)) % 16;
-            let mut client_dh_inner_data_to_encrypt =
-                vec![0; SHA1_HASH_LENGTH + client_dh_inner_data_len + random_tail_len];
+            let client_dh_inner_len = tryf!(client_dh_inner.size_hint());
+            let random_tail_len = (16 - ((SHA1_HASH_LENGTH + client_dh_inner_len) % 16)) % 16;
+            let mut client_dh_inner_to_encrypt =
+                vec![0; SHA1_HASH_LENGTH + client_dh_inner_len + random_tail_len];
 
             {
-                let (client_dh_inner_data_hash, client_dh_inner_data_rest) =
-                    client_dh_inner_data_to_encrypt.split_at_mut(SHA1_HASH_LENGTH);
-                let (client_dh_inner_data_bytes, random_tail) =
-                    client_dh_inner_data_rest.split_at_mut(client_dh_inner_data_len);
-                tryf!(serde_mtproto::to_writer(&mut *client_dh_inner_data_bytes, &client_dh_inner_data));
-                let hash_bytes = tryf!(sha1_from_bytes(&[client_dh_inner_data_bytes]));
-                client_dh_inner_data_hash.copy_from_slice(&*hash_bytes);
+                let (client_dh_inner_hash, client_dh_inner_rest) =
+                    client_dh_inner_to_encrypt.split_at_mut(SHA1_HASH_LENGTH);
+                let (client_dh_inner_bytes, random_tail) =
+                    client_dh_inner_rest.split_at_mut(client_dh_inner_len);
+                tryf!(serde_mtproto::to_writer(&mut *client_dh_inner_bytes, &client_dh_inner));
+                let hash_bytes = tryf!(sha1_from_bytes(&[client_dh_inner_bytes]));
+                client_dh_inner_hash.copy_from_slice(&*hash_bytes);
                 rand::thread_rng().fill_bytes(random_tail);
             }
 
             // Key is 256-bit => can unwrap safely
             let aes_encrypt_key = aes::AesKey::new_encrypt(&tmp_aes_key).unwrap();
-            let mut encrypted_data = vec![0; client_dh_inner_data_to_encrypt.len()];
-            aes::aes_ige(&client_dh_inner_data_to_encrypt, encrypted_data.as_mut_slice(), &aes_encrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Encrypt);
+            let mut encrypted_data = vec![0; client_dh_inner_to_encrypt.len()];
+            aes::aes_ige(&client_dh_inner_to_encrypt, encrypted_data.as_mut_slice(), &aes_encrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Encrypt);
 
             let set_client_dh_params = schema::rpc::set_client_DH_params {
                 nonce,
@@ -314,7 +363,7 @@ fn auth_step3(session: SessionConnection,
 
             let request = session.request(set_client_dh_params, MessageType::PlainText, MessageType::PlainText);
 
-            let g_a = tryf!(bn::BigNum::from_slice(&*answer.inner().g_a));
+            let g_a = tryf!(bn::BigNum::from_slice(&server_dh_inner.g_a));
             let mut g_ab = tryf!(bn::BigNum::new());
             tryf!(g_ab.mod_exp(&g_a, &b, &dh_prime, &mut ctx));
             let auth_key = g_ab.to_vec();
@@ -322,11 +371,11 @@ fn auth_step3(session: SessionConnection,
             // Hopefully server will use 64-bit integers before Year 2038
             // Problem kicks in
             let local_timestamp = Utc::now().timestamp() as i32;
-            let time_offset = answer.inner().server_time - local_timestamp;
+            let time_offset = server_dh_inner.server_time - local_timestamp;
 
-            Box::new(request.map(move |(session_conn, response)| {
+            Box::new(request.map(move |(_session_conn, response)| {
                 (
-                    session_conn, response, nonce, server_nonce, new_nonce,
+                    response, nonce, server_nonce, new_nonce,
                     auth_key, time_offset,
                 )
             }).map_err(Into::into))
@@ -334,36 +383,50 @@ fn auth_step3(session: SessionConnection,
     }
 }
 
-fn auth_step4(_session: SessionConnection,
-              set_client_dh_params_answer: schema::Set_client_DH_params_answer,
-              _nonce: i128::i128,
-              _server_nonce: i128::i128,
-              _new_nonce: I256,
+fn auth_step4(set_client_dh_params_answer: schema::Set_client_DH_params_answer,
+              nonce: i128::i128,
+              server_nonce: i128::i128,
+              new_nonce: I256,
               auth_key: Vec<u8>,
-              _time_offset: i32)
-    -> Box<Future<Item = (), Error = error::Error> + Send>
+              time_offset: i32)
+    -> Box<Future<Item = (
+        Vec<u8>,
+        i32,
+    ), Error = error::Error> + Send>
 {
     info!("Received server DH verification: {:#?}", set_client_dh_params_answer);
 
     let auth_key_sha1 = tryf!(sha1_from_bytes(&[&auth_key]));
-    let mut auth_key_hash = [0; 8];
-    auth_key_hash.copy_from_slice(&auth_key_sha1[0..8]);
     let mut auth_key_aux_hash = [0; 8];
-    auth_key_aux_hash.copy_from_slice(&auth_key_sha1[12..20]);
+    auth_key_aux_hash.copy_from_slice(&auth_key_sha1[0..8]);
+    let mut auth_key_hash = [0; 8];
+    auth_key_hash.copy_from_slice(&auth_key_sha1[12..20]);
 
     match set_client_dh_params_answer {
         schema::Set_client_DH_params_answer::dh_gen_ok(dh_gen_ok) => {
             info!("DH params verification succeeded: {:?}", dh_gen_ok);
 
-            Box::new(futures::future::ok(()))
+            tryf!(check_nonce(nonce, dh_gen_ok.nonce));
+            tryf!(check_server_nonce(server_nonce, dh_gen_ok.server_nonce));
+            tryf!(check_new_nonce_derived_hash(new_nonce, 1, auth_key_aux_hash, dh_gen_ok.new_nonce_hash1));
+
+            Box::new(futures::future::ok((auth_key, time_offset)))
         },
         schema::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
             info!("DH params verification needs a retry: {:?}", dh_gen_retry);
+
+            tryf!(check_nonce(nonce, dh_gen_retry.nonce));
+            tryf!(check_server_nonce(server_nonce, dh_gen_retry.server_nonce));
+            tryf!(check_new_nonce_derived_hash(new_nonce, 2, auth_key_aux_hash, dh_gen_retry.new_nonce_hash2));
 
             unimplemented!();
         },
         schema::Set_client_DH_params_answer::dh_gen_fail(dh_gen_fail) => {
             error!("DH params verification failed: {:?}", dh_gen_fail);
+
+            tryf!(check_nonce(nonce, dh_gen_fail.nonce));
+            tryf!(check_server_nonce(server_nonce, dh_gen_fail.server_nonce));
+            tryf!(check_new_nonce_derived_hash(new_nonce, 3, auth_key_aux_hash, dh_gen_fail.new_nonce_hash3));
 
             Box::new(futures::future::err(ErrorKind::SetClientDHParamsAnswerFail.into()))
         },
@@ -387,20 +450,30 @@ fn fetch_app_info() -> error::Result<AppInfo> {
     })
 }
 
-fn little_endian_i128_to_bytes(n: i128::i128) -> [u8; 16] {
-    let mut buf = [0; 16];
-    LittleEndian::write_u64(&mut buf[0..8], n.low64());
-    LittleEndian::write_i64(&mut buf[8..16], n.high64());
-    buf
+fn little_endian_i128_from_array(arr: &[u8; 16]) -> i128::i128 {
+    let lo = LittleEndian::read_u64(&arr[0..8]);
+    let hi = LittleEndian::read_i64(&arr[8..16]);
+    i128::i128::from_parts(hi, lo)
 }
 
-fn little_endian_i256_to_bytes(n: I256) -> [u8; 32] {
-    let mut buf = [0; 32];
-    LittleEndian::write_u64(&mut buf[0..8], n.low128().low64());
-    LittleEndian::write_u64(&mut buf[8..16], n.low128().high64());
-    LittleEndian::write_u64(&mut buf[16..24], n.high128().low64());
-    LittleEndian::write_i64(&mut buf[24..32], n.high128().high64());
-    buf
+fn little_endian_i128_into_array(n: i128::i128) -> [u8; 16] {
+    let mut arr = [0; 16];
+    LittleEndian::write_u64(&mut arr[0..8], n.low64());
+    LittleEndian::write_i64(&mut arr[8..16], n.high64());
+    arr
+}
+
+fn little_endian_i256_into_array(n: I256) -> [u8; 32] {
+    let mut arr = [0; 32];
+    little_endian_i256_to_array(&mut arr, n);
+    arr
+}
+
+fn little_endian_i256_to_array(arr: &mut [u8; 32], n: I256) {
+    LittleEndian::write_u64(&mut arr[0..8], n.low128().low64());
+    LittleEndian::write_u64(&mut arr[8..16], n.low128().high64());
+    LittleEndian::write_u64(&mut arr[16..24], n.high128().low64());
+    LittleEndian::write_i64(&mut arr[24..32], n.high128().high64());
 }
 
 fn sha1_from_bytes(bytes: &[&[u8]]) -> error::Result<hash::DigestBytes> {
@@ -411,13 +484,82 @@ fn sha1_from_bytes(bytes: &[&[u8]]) -> error::Result<hash::DigestBytes> {
     hasher.finish().map_err(Into::into)
 }
 
+fn check_nonce(expected: i128::i128, found: i128::i128) -> error::Result<()> {
+     if expected != found {
+         bail!(ErrorKind::NonceMismatch(expected, found));
+     }
+
+     Ok(())
+}
+
+fn check_server_nonce(expected: i128::i128, found: i128::i128) -> error::Result<()> {
+     if expected != found {
+         bail!(ErrorKind::ServerNonceMismatch(expected, found));
+     }
+
+     Ok(())
+}
+
+fn check_new_nonce_hash(expected_new_nonce: I256,
+                        found_hash: i128::i128)
+    -> error::Result<()>
+{
+    let mut expected_bytes = [0; 32];
+    little_endian_i256_to_array(&mut expected_bytes, expected_new_nonce);
+    let expected_sha1 = sha1_from_bytes(&[&expected_bytes])?;
+    let expected_hash = little_endian_i128_from_array(array_ref!(expected_sha1, 4, 16));
+
+    if expected_hash != found_hash {
+        bail!(ErrorKind::NewNonceHashMismatch(expected_new_nonce, found_hash));
+    }
+
+    Ok(())
+}
+
+fn check_new_nonce_derived_hash(expected_new_nonce: I256,
+                                marker: u8,
+                                auth_key_aux_hash: [u8; 8],
+                                found_hash: i128::i128)
+    -> error::Result<()>
+{
+    let mut expected_bytes = [0; 32 + 1 + 8];  // TODO: replace magic numbers?
+
+    {
+        let (nonce_bytes, marker_byte, aux_hash_bytes) = mut_array_refs!(&mut expected_bytes, 32, 1, 8);
+        little_endian_i256_to_array(nonce_bytes, expected_new_nonce);
+        marker_byte[0] = marker;
+        aux_hash_bytes.copy_from_slice(&auth_key_aux_hash);
+    }
+
+    let expected_sha1 = sha1_from_bytes(&[&expected_bytes])?;
+    let expected_hash = little_endian_i128_from_array(array_ref!(expected_sha1, 4, 16));
+
+    if expected_hash != found_hash {
+        bail!(ErrorKind::NewNonceDerivedHashMismatch(
+            expected_new_nonce, marker, auth_key_aux_hash, found_hash));
+    }
+
+    Ok(())
+}
+
+fn check_sha1(expected: &[u8], found: &[u8]) -> error::Result<()> {
+    if expected != found {
+        bail!(ErrorKind::Sha1Mismatch(expected.to_vec(), found.to_vec()));
+    }
+
+    Ok(())
+}
+
 
 fn processed_auth(config: ConnectionConfig, tag: &'static str)
     -> Box<Future<Item = (), Error = ()> + Send>
 {
     Box::new(auth(config).then(move |res| {
         match res {
-            Ok(()) => println!("Success ({})", tag),
+            Ok((auth_key, time_offset)) => {
+                println!("Success ({}): auth key = {:?}, time offset = {}",
+                    tag, auth_key, time_offset);
+            },
             Err(e) => println!("{} ({})", e, tag),
         }
 

@@ -3,7 +3,7 @@ name = "mtproto"
 version = "0.0.1"
 description = "MTProto protocol and schema implementation in Rust"
 authors = ["Connor Hilarides <connorcpu@live.com>"]
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 homepage = "https://github.com/Connicpu/mtproto-rs"
 documentation = "https://docs.rs/mtproto"
@@ -44,6 +44,7 @@ log = "0.4"
 tl_codegen = { path = "tl_codegen" }
 
 [dev-dependencies]
+arrayref = "0.3"
 dotenv = "0.13"
 env_logger = "0.5"
 pretty_assertions = "0.5"

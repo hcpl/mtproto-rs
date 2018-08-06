@@ -34,7 +34,7 @@ fn test_plain_text() {
     assert_eq!(bytes.len(), message.size_hint().unwrap());
 
     // Since the message is plain-text, we don't need the second parameter
-    let msg: Message<i32> = session.process_message(&bytes, None).unwrap();
+    let msg: Message<i32> = session.process_message(&bytes, None, &[]).unwrap();
     debug!("{:#?}", msg);
     assert_eq!(message, msg);
 }
@@ -61,7 +61,7 @@ fn test_encrypted() {
     assert_eq!(bytes.len(), message.size_hint().unwrap());
 
     // Pass number of bytes of encrypted data as second parameter
-    let msg: Message<i32> = session.process_message(&bytes, Some(48)).unwrap();
+    let msg: Message<i32> = session.process_message(&bytes, Some(48), &[]).unwrap();
     debug!("{:?}", msg);
     assert_eq!(message, msg);
 }
