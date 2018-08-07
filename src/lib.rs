@@ -1,6 +1,8 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "160"]
+#![recursion_limit = "161"]
 
+#[macro_use]
+extern crate arrayref;
 extern crate byteorder;
 extern crate chrono;
 extern crate crc;

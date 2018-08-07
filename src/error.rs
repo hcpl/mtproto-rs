@@ -130,5 +130,52 @@ error_chain! {
             description("Response message type mismatch")
             display("Response message type mismatch: (expected {:?}, found {:?})", expected, found)
         }
+
+        NonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
+            description("nonce mismatch")
+            display("nonce mismatch (expected {:x}, found {:x})", expected, found)
+        }
+
+        ServerNonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
+            description("server nonce mismatch")
+            display("server nonce mismatch (expected {:x}, found {:x})", expected, found)
+        }
+
+        NewNonceHashMismatch(
+            expected_new_nonce: ::I256,
+            found_hash: ::extprim::i128::i128
+        ) {
+            description("new nonce hash mismatch")
+            display("new nonce hash mismatch (expected new nonce = {:x}, found hash {:x})",
+                expected_new_nonce, found_hash)
+        }
+
+        NewNonceDerivedHashMismatch(
+            expected_new_nonce: ::I256,
+            marker: u8,
+            aux_hash: [u8; 8],
+            found_hash: ::extprim::i128::i128
+        ) {
+            description("new nonce derived hash mismatch")
+            display(
+                "new nonce derived hash mismatch \
+                 (expected new nonce = {:x}, marker = {}, auth key aux hash = {:?}; found hash {:x})",
+                expected_new_nonce, marker, aux_hash, found_hash)
+        }
+
+        Sha1Mismatch(expected: Vec<u8>, found: Vec<u8>) {
+            description("SHA1 hash mismatch")
+            display("SHA1 hash mismatch (expected {:?}, found {:?})", expected, found)
+        }
+
+        ServerDHParamsFail {
+            description("server didn't send DH parameters")
+            display("server didn't send DH parameters")
+        }
+
+        SetClientDHParamsAnswerFail {
+            description("server failed to verify DH parameters")
+            display("server failed to verify DH parameters")
+        }
     }
 }

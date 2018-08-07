@@ -15,6 +15,7 @@ use schema::FutureSalt;
 use tl::dynamic::TLObject;
 
 
+pub mod auth;
 pub mod connection;
 pub mod encryption;
 pub mod message;

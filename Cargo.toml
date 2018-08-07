@@ -12,6 +12,7 @@ keywords = ["async", "mtproto", "protocol", "telegram"]
 categories = ["api-bindings"]
 
 [dependencies]
+arrayref = "0.3"
 byteorder = "1.1"
 chrono = "0.4"
 crc = "1.5"
@@ -44,7 +45,6 @@ log = "0.4"
 tl_codegen = { path = "tl_codegen" }
 
 [dev-dependencies]
-arrayref = "0.3"
 dotenv = "0.13"
 env_logger = "0.5"
 pretty_assertions = "0.5"
