@@ -1,7 +1,10 @@
+use byteorder::{ByteOrder, LittleEndian};
 use num_traits::cast::cast;
 use num_traits::int::PrimInt;
+use openssl::hash;
 
-use error::{self, ErrorKind};
+use ::I256;
+use ::error::{self, ErrorKind};
 
 
 pub(crate) fn safe_int_cast<T: PrimInt + Copy, U: PrimInt>(n: T) -> error::Result<U> {
@@ -9,4 +12,60 @@ pub(crate) fn safe_int_cast<T: PrimInt + Copy, U: PrimInt>(n: T) -> error::Resul
         let upcasted = cast::<T, u64>(n).unwrap();    // Shouldn't panic
         ErrorKind::IntegerCast(upcasted).into()
     })
+}
+
+
+pub(crate) fn little_endian_i128_from_array(arr: &[u8; 16]) -> i128 {
+    let lo = LittleEndian::read_u64(&arr[0..8]);
+    let hi = LittleEndian::read_i64(&arr[8..16]);
+    i128_from_parts(hi, lo)
+}
+
+pub(crate) fn little_endian_i128_into_array(n: i128) -> [u8; 16] {
+    let mut arr = [0; 16];
+    let (hi, lo) = i128_to_parts(n);
+    LittleEndian::write_u64(&mut arr[0..8], lo);
+    LittleEndian::write_i64(&mut arr[8..16], hi);
+    arr
+}
+
+pub(crate) fn little_endian_i256_into_array(n: I256) -> [u8; 32] {
+    let mut arr = [0; 32];
+    little_endian_i256_to_array(&mut arr, n);
+    arr
+}
+
+pub(crate) fn little_endian_i256_to_array(arr: &mut [u8; 32], n: I256) {
+    let (lo128_hi, lo128_lo) = u128_to_parts(n.low128());
+    let (hi128_hi, hi128_lo) = i128_to_parts(n.high128());
+
+    LittleEndian::write_u64(&mut arr[0..8], lo128_lo);
+    LittleEndian::write_u64(&mut arr[8..16], lo128_hi);
+    LittleEndian::write_u64(&mut arr[16..24], hi128_lo);
+    LittleEndian::write_i64(&mut arr[24..32], hi128_hi);
+}
+
+pub(crate) fn i128_from_parts(hi: i64, lo: u64) -> i128 {
+    i128::from(hi) << 64 | i128::from(lo)
+}
+
+fn u128_to_parts(n: u128) -> (u64, u64) {
+    let lo = n as u64;
+    let hi = (n >> 64) as u64;
+    (hi, lo)
+}
+
+fn i128_to_parts(n: i128) -> (i64, u64) {
+    let lo = n as u64;
+    let hi = (n >> 64) as i64;
+    (hi, lo)
+}
+
+
+pub(crate) fn sha1_from_bytes(parts: &[&[u8]]) -> error::Result<hash::DigestBytes> {
+    let mut hasher = hash::Hasher::new(hash::MessageDigest::sha1())?;
+    for part in parts {
+        hasher.update(part)?;
+    }
+    hasher.finish().map_err(Into::into)
 }

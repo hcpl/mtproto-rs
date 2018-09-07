@@ -3,7 +3,6 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use extprim::i128::i128;
 use serde::ser::{self, Error as SerError, Serialize};
 use serde::de::{self, DeserializeOwned, DeserializeSeed, Error as DeError, SeqAccess, Visitor};
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, WithSize, UnsizedByteBuf, UnsizedByteBufSeed, size_hint_from_unsized_byte_seq_len};
@@ -84,7 +83,7 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
             },
             Message::Decrypted { ref decrypted_data } => {
                 // just a dummy value, not an actual one
-                let msg_key_size = i128::size_hint(&i128::new(0))?;
+                let msg_key_size = i128::size_hint(&0i128)?;
                 let minimum_encrypted_data_size = decrypted_data.size_hint()?;
                 let actual_encrypted_data_size =
                     size_hint_from_unsized_byte_seq_len(minimum_encrypted_data_size)?;

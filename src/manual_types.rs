@@ -1,7 +1,6 @@
 use std::fmt::{self, Write};
 use std::str;
 
-use extprim::{i128, u128};
 use rand;
 
 use tl::dynamic::TLObject;
@@ -17,29 +16,29 @@ pub type Object = Box<TLObject>;
 #[repr(C)]
 pub struct I256 {
     #[cfg(target_endian = "little")]
-    lo: u128::u128,
-    hi: i128::i128,
+    lo: u128,
+    hi: i128,
     #[cfg(target_endian = "big")]
-    lo: u128::u128,
+    lo: u128,
 }
 
 impl I256 {
-    pub fn from_parts(lo: u128::u128, hi: i128::i128) -> I256 {
+    pub fn from_parts(lo: u128, hi: i128) -> I256 {
         I256 { lo, hi }
     }
 
-    pub fn low128(self) -> u128::u128 {
+    pub fn low128(self) -> u128 {
         self.lo
     }
 
-    pub fn high128(self) -> i128::i128 {
+    pub fn high128(self) -> i128 {
         self.hi
     }
 }
 
 impl fmt::Display for I256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.hi == i128::ZERO {
+        if self.hi == 0 {
             self.lo.fmt(f)
         } else {
             unimplemented!()
@@ -55,7 +54,7 @@ impl fmt::Debug for I256 {
 
 impl fmt::Binary for I256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.hi == i128::ZERO {
+        if self.hi == 0 {
             self.lo.fmt(f)
         } else {
             let mut buffer = [0u8; 256];
@@ -69,7 +68,7 @@ impl fmt::Binary for I256 {
 
 impl fmt::LowerHex for I256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.hi == i128::ZERO {
+        if self.hi == 0 {
             self.lo.fmt(f)
         } else {
             let mut buffer = [0u8; 64];
@@ -83,7 +82,7 @@ impl fmt::LowerHex for I256 {
 
 impl fmt::UpperHex for I256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.hi == i128::ZERO {
+        if self.hi == 0 {
             self.lo.fmt(f)
         } else {
             let mut buffer = [0u8; 64];
@@ -95,12 +94,14 @@ impl fmt::UpperHex for I256 {
     }
 }
 
-impl rand::Rand for I256 {
-    fn rand<R: rand::Rng>(rng: &mut R) -> I256 {
-        I256 {
-            lo: u128::u128::rand(rng),
-            hi: i128::i128::rand(rng),
-        }
+impl rand::distributions::Distribution<I256> for rand::distributions::Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> I256 {
+        // Use LE; we explicitly generate one value before the next.
+        // Explained in <https://docs.rs/rand/0.5.5/src/rand/distributions/integer.rs.html#48>.
+        let lo = self.sample(rng);
+        let hi = self.sample(rng);
+
+        I256 { lo, hi }
     }
 }
 

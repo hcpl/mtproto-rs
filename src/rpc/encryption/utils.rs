@@ -1,8 +1,8 @@
 use std::io::{Cursor, Write};
 
 use error::{self, ErrorKind};
-use rand::{self, Rng};
-use rpc::utils::sha1_bytes;
+use rand::{self, RngCore};
+use utils::sha1_from_bytes;
 
 
 pub(super) enum Padding {
@@ -12,7 +12,7 @@ pub(super) enum Padding {
 
 pub(super) fn sha1_and_or_pad(input: &[u8], prepend_sha1: bool, padding: Padding) -> error::Result<Vec<u8>> {
     let mut result = if prepend_sha1 {
-        sha1_bytes(&[input])?
+        sha1_from_bytes(&[input])?.to_vec()
     } else {
         vec![]
     };

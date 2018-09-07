@@ -10,7 +10,6 @@ extern crate envy;
 extern crate erased_serde;
 #[macro_use]
 extern crate error_chain;
-extern crate extprim;
 extern crate futures;
 extern crate http;
 extern crate hyper;

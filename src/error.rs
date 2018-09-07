@@ -131,19 +131,19 @@ error_chain! {
             display("Response message type mismatch: (expected {:?}, found {:?})", expected, found)
         }
 
-        NonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
+        NonceMismatch(expected: i128, found: i128) {
             description("nonce mismatch")
             display("nonce mismatch (expected {:x}, found {:x})", expected, found)
         }
 
-        ServerNonceMismatch(expected: ::extprim::i128::i128, found: ::extprim::i128::i128) {
+        ServerNonceMismatch(expected: i128, found: i128) {
             description("server nonce mismatch")
             display("server nonce mismatch (expected {:x}, found {:x})", expected, found)
         }
 
         NewNonceHashMismatch(
             expected_new_nonce: ::I256,
-            found_hash: ::extprim::i128::i128
+            found_hash: i128
         ) {
             description("new nonce hash mismatch")
             display("new nonce hash mismatch (expected new nonce = {:x}, found hash {:x})",
@@ -154,7 +154,7 @@ error_chain! {
             expected_new_nonce: ::I256,
             marker: u8,
             aux_hash: [u8; 8],
-            found_hash: ::extprim::i128::i128
+            found_hash: i128
         ) {
             description("new nonce derived hash mismatch")
             display(

@@ -3,11 +3,10 @@
 use std::fmt;
 
 use byteorder::{ByteOrder, LittleEndian};
-use extprim::i128::i128;
 use openssl::{aes, symm};
 
 use error::{self, ErrorKind};
-use rpc::utils::sha1_bytes;
+use utils::{i128_from_parts, little_endian_i128_into_array, sha1_from_bytes};
 
 use super::AUTH_KEY_SIZE;
 use super::utils::{Padding, sha1_and_or_pad, set_slice_parts};
@@ -135,7 +134,7 @@ impl AuthKey {
             bail!(ErrorKind::AuthKeyTooLong(AUTH_KEY_SIZE, key_in.to_vec()));
         }
 
-        let sha1 = sha1_bytes(&[&key])?;
+        let sha1 = sha1_from_bytes(&[&key])?;
         let aux_hash = LittleEndian::read_i64(&sha1[0..8]);
         let fingerprint = LittleEndian::read_i64(&sha1[12..20]);
 
@@ -154,13 +153,13 @@ impl AuthKey {
     pub fn encrypt_message_bytes(&self, message_bytes: &[u8]) -> error::Result<(i64, i128, Vec<u8>)> {
         let auth_key_id = self.fingerprint;
 
-        let message_hash = sha1_bytes(&[message_bytes])?;
+        let message_hash = sha1_from_bytes(&[message_bytes])?;
         let mut message_key_bytes = [0; 16];
         message_key_bytes.copy_from_slice(&message_hash[4..20]);
 
         let message_key_lo = LittleEndian::read_u64(&message_key_bytes[0..8]);
         let message_key_hi = LittleEndian::read_i64(&message_key_bytes[8..16]);
-        let message_key = i128::from_parts(message_key_hi, message_key_lo);
+        let message_key = i128_from_parts(message_key_hi, message_key_lo);
 
         let aes = self.generate_message_aes_params(message_key, symm::Mode::Encrypt)?;
         let encrypted_data = aes.ige_encrypt(message_bytes, false)?;
@@ -183,9 +182,7 @@ impl AuthKey {
     }
 
     fn generate_message_aes_params(&self, msg_key: i128, mode: symm::Mode) -> error::Result<AesParams> {
-        let mut msg_key_bytes = [0; 16];
-        LittleEndian::write_u64(&mut msg_key_bytes[0..8], msg_key.low64());
-        LittleEndian::write_i64(&mut msg_key_bytes[8..16], msg_key.high64());
+        let msg_key_bytes = little_endian_i128_into_array(msg_key);
 
         let mut pos = match mode {
             symm::Mode::Encrypt => 0,
@@ -198,10 +195,10 @@ impl AuthKey {
             ret
         };
 
-        let sha1_a = sha1_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
-        let sha1_b = sha1_bytes(&[auth_key_take(16), &msg_key_bytes, auth_key_take(16)])?;
-        let sha1_c = sha1_bytes(&[auth_key_take(32), &msg_key_bytes])?;
-        let sha1_d = sha1_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
+        let sha1_a = sha1_from_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
+        let sha1_b = sha1_from_bytes(&[auth_key_take(16), &msg_key_bytes, auth_key_take(16)])?;
+        let sha1_c = sha1_from_bytes(&[auth_key_take(32), &msg_key_bytes])?;
+        let sha1_d = sha1_from_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
 
         let mut ret: AesParams = Default::default();
         set_slice_parts(&mut ret.key, &[&sha1_a[0..8], &sha1_b[8..20], &sha1_c[4..16]]);

@@ -1,9 +1,8 @@
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
+use byteorder::{BigEndian, ByteOrder};
 use chrono::Utc;
-use extprim::i128;
 use futures::{self, Future, Poll};
-use openssl::{aes, bn, hash, symm};
-use rand::{self, Rng};
+use openssl::{aes, bn, symm};
+use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
 use ::error::{self, ErrorKind};
@@ -12,6 +11,13 @@ use ::rpc::connection::ConnectionConfig;
 use ::rpc::encryption::asymm;
 use ::rpc::session::SessionConnection;
 use ::schema;
+use ::utils::{
+    little_endian_i128_from_array,
+    little_endian_i128_into_array,
+    little_endian_i256_into_array,
+    little_endian_i256_to_array,
+    sha1_from_bytes,
+};
 use ::I256;
 
 
@@ -121,7 +127,7 @@ fn auth_step1(input: Step1Input)
 struct Step2Input {
     session_conn: SessionConnection,
     res_pq: schema::ResPQ,
-    nonce: i128::i128,
+    nonce: i128,
 }
 
 /// Step 2: Presenting PQ proof of work & server authentication
@@ -129,7 +135,7 @@ fn auth_step2(input: Step2Input)
     -> Box<Future<Item = Step3Input, Error = error::Error> + Send>
 {
     fn prepare_step2(input: Step2Input)
-        -> error::Result<(SessionConnection, schema::rpc::req_DH_params, i128::i128, i128::i128, I256)>
+        -> error::Result<(SessionConnection, schema::rpc::req_DH_params, i128, i128, I256)>
     {
         let Step2Input { session_conn, res_pq, nonce } = input;
 
@@ -215,8 +221,8 @@ fn auth_step2(input: Step2Input)
 struct Step3Input {
     session_conn: SessionConnection,
     server_dh_params: schema::Server_DH_Params,
-    nonce: i128::i128,
-    server_nonce: i128::i128,
+    nonce: i128,
+    server_nonce: i128,
     new_nonce: I256,
 }
 
@@ -225,7 +231,7 @@ fn auth_step3(input: Step3Input)
     -> Box<Future<Item = Step4Input, Error = error::Error> + Send>
 {
     fn prepare_step3(input: Step3Input)
-        -> error::Result<(SessionConnection, schema::rpc::set_client_DH_params, i128::i128, i128::i128, I256, Vec<u8>, i32)>
+        -> error::Result<(SessionConnection, schema::rpc::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
     {
         let Step3Input { session_conn, server_dh_params, nonce, server_nonce, new_nonce } = input;
 
@@ -361,8 +367,8 @@ fn auth_step3(input: Step3Input)
 
 struct Step4Input {
     set_client_dh_params_answer: schema::Set_client_DH_params_answer,
-    nonce: i128::i128,
-    server_nonce: i128::i128,
+    nonce: i128,
+    server_nonce: i128,
     new_nonce: I256,
     auth_key: Vec<u8>,
     time_offset: i32,
@@ -425,41 +431,7 @@ fn auth_step4(input: Step4Input)
 
 // ===== UTILS ===== //
 
-fn little_endian_i128_from_array(arr: &[u8; 16]) -> i128::i128 {
-    let lo = LittleEndian::read_u64(&arr[0..8]);
-    let hi = LittleEndian::read_i64(&arr[8..16]);
-    i128::i128::from_parts(hi, lo)
-}
-
-fn little_endian_i128_into_array(n: i128::i128) -> [u8; 16] {
-    let mut arr = [0; 16];
-    LittleEndian::write_u64(&mut arr[0..8], n.low64());
-    LittleEndian::write_i64(&mut arr[8..16], n.high64());
-    arr
-}
-
-fn little_endian_i256_into_array(n: I256) -> [u8; 32] {
-    let mut arr = [0; 32];
-    little_endian_i256_to_array(&mut arr, n);
-    arr
-}
-
-fn little_endian_i256_to_array(arr: &mut [u8; 32], n: I256) {
-    LittleEndian::write_u64(&mut arr[0..8], n.low128().low64());
-    LittleEndian::write_u64(&mut arr[8..16], n.low128().high64());
-    LittleEndian::write_u64(&mut arr[16..24], n.high128().low64());
-    LittleEndian::write_i64(&mut arr[24..32], n.high128().high64());
-}
-
-fn sha1_from_bytes(bytes: &[&[u8]]) -> error::Result<hash::DigestBytes> {
-    let mut hasher = hash::Hasher::new(hash::MessageDigest::sha1())?;
-    for b in bytes {
-        hasher.update(b)?;
-    }
-    hasher.finish().map_err(Into::into)
-}
-
-fn check_nonce(expected: i128::i128, found: i128::i128) -> error::Result<()> {
+fn check_nonce(expected: i128, found: i128) -> error::Result<()> {
      if expected != found {
          bail!(ErrorKind::NonceMismatch(expected, found));
      }
@@ -467,7 +439,7 @@ fn check_nonce(expected: i128::i128, found: i128::i128) -> error::Result<()> {
      Ok(())
 }
 
-fn check_server_nonce(expected: i128::i128, found: i128::i128) -> error::Result<()> {
+fn check_server_nonce(expected: i128, found: i128) -> error::Result<()> {
      if expected != found {
          bail!(ErrorKind::ServerNonceMismatch(expected, found));
      }
@@ -476,7 +448,7 @@ fn check_server_nonce(expected: i128::i128, found: i128::i128) -> error::Result<
 }
 
 fn check_new_nonce_hash(expected_new_nonce: I256,
-                        found_hash: i128::i128)
+                        found_hash: i128)
     -> error::Result<()>
 {
     let mut expected_bytes = [0; 32];
@@ -494,7 +466,7 @@ fn check_new_nonce_hash(expected_new_nonce: I256,
 fn check_new_nonce_derived_hash(expected_new_nonce: I256,
                                 marker: u8,
                                 auth_key_aux_hash: [u8; 8],
-                                found_hash: i128::i128)
+                                found_hash: i128)
     -> error::Result<()>
 {
     let mut expected_bytes = [0; 32 + 1 + 8];  // TODO: replace magic numbers?
