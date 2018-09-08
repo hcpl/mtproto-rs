@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "161"]
+#![recursion_limit = "165"]
 
 #[macro_use]
 extern crate arrayref;
@@ -10,6 +10,7 @@ extern crate envy;
 extern crate erased_serde;
 #[macro_use]
 extern crate error_chain;
+extern crate flate2;
 extern crate futures;
 extern crate http;
 extern crate hyper;
@@ -34,6 +35,7 @@ extern crate toml;
 
 
 mod manual_types;
+#[macro_use]
 mod utils;
 
 pub mod error;

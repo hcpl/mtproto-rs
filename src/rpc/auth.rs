@@ -1,6 +1,6 @@
-use byteorder::{BigEndian, ByteOrder};
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
-use futures::{self, Future, Poll};
+use futures::{Future, Poll};
 use openssl::{aes, bn, symm};
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
@@ -21,59 +21,15 @@ use ::utils::{
 use ::I256;
 
 
-macro_rules! bailf {
-    ($e:expr) => {
-        return Box::new(futures::future::err($e.into()))
-    }
-}
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match { $e } {
-            Ok(v) => v,
-            Err(e) => bailf!(e),
-        }
-    }
-}
-
-macro_rules! array_int {
-    ($($len:tt => $source:expr,)+) => {{
-        let mut arr = [0; 0 $(+ $len)+];
-        array_int! { @iter arr [] [$($len => $source,)+] }
-        arr
-    }};
-
-    (@iter
-        $arr:ident
-        [$($used_len:tt => $used_source:expr,)*]
-        []
-    ) => {};
-
-    (@iter
-        $arr:ident
-        [$($used_len:tt => $used_source:expr,)*]
-        [
-            $first_unused_len:tt => $first_unused_source:expr,
-            $($rest_unused_len:tt => $rest_unused_source:expr,)*
-        ]
-    ) => {
-        $arr[(0 $(+ $used_len)*)..($first_unused_len $(+ $used_len)*)]
-            .copy_from_slice($first_unused_source);
-        array_int! { @iter
-            $arr
-            [
-                $($used_len => $used_source,)*
-                $first_unused_len => $first_unused_source,
-            ]
-            [$($rest_unused_len => $rest_unused_source,)*]
-        }
-    };
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthKey {
+    aux_hash: i64,
+    fingerprint: i64,
 }
 
 
 pub struct AuthValues {
-    //pub auth_key: AuthKey,
-    pub auth_key: Vec<u8>,
+    pub auth_key: AuthKey,
     pub time_offset: i32,
 }
 
@@ -336,19 +292,19 @@ fn auth_step3(input: Step3Input)
                 let g_a = bn::BigNum::from_slice(&server_dh_inner.g_a)?;
                 let mut g_ab = bn::BigNum::new()?;
                 g_ab.mod_exp(&g_a, &b, &dh_prime, &mut ctx)?;
-                let auth_key = g_ab.to_vec();
+                let auth_key_bytes = g_ab.to_vec();
 
                 // Hopefully server will use 64-bit integers before Year 2038
                 // Problem kicks in
                 let local_timestamp = Utc::now().timestamp() as i32;
                 let time_offset = server_dh_inner.server_time - local_timestamp;
 
-                Ok((session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key, time_offset))
+                Ok((session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset))
             },
         }
     }
 
-    let (session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key, time_offset) =
+    let (session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset) =
         tryf!(prepare_step3(input));
 
     let request = session_conn.request(set_client_dh_params, MessageType::PlainText, MessageType::PlainText);
@@ -359,7 +315,7 @@ fn auth_step3(input: Step3Input)
             nonce,
             server_nonce,
             new_nonce,
-            auth_key,
+            auth_key_bytes,
             time_offset,
         }
     }))
@@ -370,7 +326,7 @@ struct Step4Input {
     nonce: i128,
     server_nonce: i128,
     new_nonce: I256,
-    auth_key: Vec<u8>,
+    auth_key_bytes: Vec<u8>,
     time_offset: i32,
 }
 
@@ -382,19 +338,17 @@ fn auth_step4(input: Step4Input)
         nonce,
         server_nonce,
         new_nonce,
-        auth_key,
+        auth_key_bytes,
         time_offset,
     } = input;
 
     info!("Received server DH verification: {:#?}", set_client_dh_params_answer);
 
-    let auth_key_sha1 = sha1_from_bytes(&[&auth_key])?;
-    let auth_key_aux_hash = array_int! {
-        8 => &auth_key_sha1[0..8],
+    let auth_key_sha1 = sha1_from_bytes(&[&auth_key_bytes])?;
+    let auth_key = AuthKey {
+        aux_hash: LittleEndian::read_i64(&auth_key_sha1[0..8]),
+        fingerprint: LittleEndian::read_i64(&auth_key_sha1[8..16]),
     };
-    //let auth_key_hash = array_int! {
-    //    8 => &auth_key_sha1[12..20],
-    //};
 
     match set_client_dh_params_answer {
         schema::Set_client_DH_params_answer::dh_gen_ok(dh_gen_ok) => {
@@ -402,7 +356,7 @@ fn auth_step4(input: Step4Input)
 
             check_nonce(nonce, dh_gen_ok.nonce)?;
             check_server_nonce(server_nonce, dh_gen_ok.server_nonce)?;
-            check_new_nonce_derived_hash(new_nonce, 1, auth_key_aux_hash, dh_gen_ok.new_nonce_hash1)?;
+            check_new_nonce_derived_hash(new_nonce, 1, auth_key.aux_hash, dh_gen_ok.new_nonce_hash1)?;
 
             Ok(AuthValues { auth_key, time_offset })
         },
@@ -411,7 +365,7 @@ fn auth_step4(input: Step4Input)
 
             check_nonce(nonce, dh_gen_retry.nonce)?;
             check_server_nonce(server_nonce, dh_gen_retry.server_nonce)?;
-            check_new_nonce_derived_hash(new_nonce, 2, auth_key_aux_hash, dh_gen_retry.new_nonce_hash2)?;
+            check_new_nonce_derived_hash(new_nonce, 2, auth_key.aux_hash, dh_gen_retry.new_nonce_hash2)?;
 
             // TODO: implement DH retries
             unimplemented!();
@@ -421,7 +375,7 @@ fn auth_step4(input: Step4Input)
 
             check_nonce(nonce, dh_gen_fail.nonce)?;
             check_server_nonce(server_nonce, dh_gen_fail.server_nonce)?;
-            check_new_nonce_derived_hash(new_nonce, 3, auth_key_aux_hash, dh_gen_fail.new_nonce_hash3)?;
+            check_new_nonce_derived_hash(new_nonce, 3, auth_key.aux_hash, dh_gen_fail.new_nonce_hash3)?;
 
             bail!(ErrorKind::SetClientDHParamsAnswerFail);
         },
@@ -465,7 +419,7 @@ fn check_new_nonce_hash(expected_new_nonce: I256,
 
 fn check_new_nonce_derived_hash(expected_new_nonce: I256,
                                 marker: u8,
-                                auth_key_aux_hash: [u8; 8],
+                                auth_key_aux_hash: i64,
                                 found_hash: i128)
     -> error::Result<()>
 {
@@ -475,7 +429,7 @@ fn check_new_nonce_derived_hash(expected_new_nonce: I256,
         let (nonce_bytes, marker_byte, aux_hash_bytes) = mut_array_refs!(&mut expected_bytes, 32, 1, 8);
         little_endian_i256_to_array(nonce_bytes, expected_new_nonce);
         marker_byte[0] = marker;
-        aux_hash_bytes.copy_from_slice(&auth_key_aux_hash);
+        LittleEndian::write_i64(aux_hash_bytes, auth_key_aux_hash);
     }
 
     let expected_sha1 = sha1_from_bytes(&[&expected_bytes])?;

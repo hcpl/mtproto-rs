@@ -240,7 +240,7 @@ impl Session {
     /// Reads a `Message` from raw bytes.
     pub fn process_message<T>(&self,
                               message_bytes: &[u8],
-                              encrypted_data_len: Option<u32>,
+                              encrypted_data_len: Option<usize>,
                               enum_variant_ids: &[&'static str])
         -> error::Result<Message<T>>
         where T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized

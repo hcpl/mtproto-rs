@@ -37,6 +37,8 @@ destroy_auth_key#d1435160 = DestroyAuthKeyRes;
 
 msgs_ack#62d6b459 msg_ids:Vector<long> = MsgsAck;
 
+rpc_error#2144ca19 error_code:int error_message:string = RpcError;
+
 future_salt#0949d9dc valid_since:int valid_until:int salt:long = FutureSalt;
 future_salts#ae500895 req_msg_id:long now:int salts:vector<future_salt> = FutureSalts;
 

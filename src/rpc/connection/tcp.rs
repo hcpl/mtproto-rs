@@ -127,7 +127,7 @@ fn parse_response<U>(session: &Session,
 
     let encrypted_data_len = match message_type {
         MessageType::PlainText => None,
-        MessageType::Encrypted => Some((len - 24) as u32),
+        MessageType::Encrypted => Some(len - 24),
     };
 
     if let Some(variant_names) = U::all_enum_variant_names() {
@@ -193,7 +193,7 @@ impl MtProtoTcpMode for FullModeHandler {
         -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject
     {
-        let size = tryf!(message.size_hint()) + 12;  // FIXME: Can overflow on 32-bit systems
+        let size = tryf!(message.size_hint()) + 12;  // FIXME: May overflow on 32-bit systems
         let data = if size <= 0xff_ff_ff_ff {
             let mut buf = vec![0; size];
 

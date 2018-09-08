@@ -8,7 +8,7 @@ use serde_bytes::ByteBuf;
 use serde_mtproto;
 
 use error::{self, ErrorKind};
-use utils::safe_int_cast;
+use utils::safe_uint_cast;
 
 use super::symm::AuthKey;
 use super::utils::{Padding, sha1_and_or_pad};
@@ -222,8 +222,8 @@ pub fn decompose_pq(pq: u64) -> error::Result<(u32, u32)> {
             pq_sqrt += 1;
             continue;
         }
-        let p = safe_int_cast::<u64, u32>(pq_sqrt + y)?;
-        let q = safe_int_cast::<u64, u32>(if pq_sqrt > y { pq_sqrt - y } else { y - pq_sqrt })?;
+        let p = safe_uint_cast::<u64, u32>(pq_sqrt + y)?;
+        let q = safe_uint_cast::<u64, u32>(if pq_sqrt > y { pq_sqrt - y } else { y - pq_sqrt })?;
         let (p, q) = if p > q {(q, p)} else {(p, q)};
         debug!("decompose_pq({}) = ({}, {})", pq, p, q);
         return Ok((p, q))

@@ -1,16 +1,20 @@
 use byteorder::{ByteOrder, LittleEndian};
 use num_traits::cast::cast;
 use num_traits::int::PrimInt;
+use num_traits::sign::Unsigned;
 use openssl::hash;
 
 use ::I256;
 use ::error::{self, ErrorKind};
 
 
-pub(crate) fn safe_int_cast<T: PrimInt + Copy, U: PrimInt>(n: T) -> error::Result<U> {
+pub(crate) fn safe_uint_cast<T, U>(n: T) -> error::Result<U>
+    where T: PrimInt + Unsigned,
+          U: PrimInt + Unsigned,
+{
     cast(n).ok_or_else(|| {
-        let upcasted = cast::<T, u64>(n).unwrap();    // Shouldn't panic
-        ErrorKind::IntegerCast(upcasted).into()
+        let upcasted = cast::<T, u128>(n).unwrap();    // Shouldn't panic
+        ErrorKind::UnsignedIntegerCast(upcasted).into()
     })
 }
 
@@ -68,4 +72,66 @@ pub(crate) fn sha1_from_bytes(parts: &[&[u8]]) -> error::Result<hash::DigestByte
         hasher.update(part)?;
     }
     hasher.finish().map_err(Into::into)
+}
+
+pub(crate) fn sha256_from_bytes(parts: &[&[u8]]) -> error::Result<hash::DigestBytes> {
+    let mut hasher = hash::Hasher::new(hash::MessageDigest::sha256())?;
+    for part in parts {
+        hasher.update(part)?;
+    }
+    hasher.finish().map_err(Into::into)
+}
+
+
+macro_rules! bailf {
+    ($e:expr) => {
+        return Box::new(::futures::future::err($e.into()))
+    }
+}
+
+macro_rules! tryf {
+    ($e:expr) => {
+        match { $e } {
+            Ok(v) => v,
+            Err(e) => bailf!(e),
+        }
+    }
+}
+
+macro_rules! array_int {
+    ($($len:tt => $source:expr,)+) => {{
+        let mut arr = [0; 0 $(+ $len)+];
+        array_int! { @iter arr [] [$($len => $source,)+] }
+        arr
+    }};
+
+    ($($len:tt => $source:expr),+) => {
+        array_int! { $($len => $source,)+ }
+    };
+
+    (@iter
+        $arr:ident
+        [$($used_len:tt => $used_source:expr,)*]
+        []
+    ) => {};
+
+    (@iter
+        $arr:ident
+        [$($used_len:tt => $used_source:expr,)*]
+        [
+            $first_unused_len:tt => $first_unused_source:expr,
+            $($rest_unused_len:tt => $rest_unused_source:expr,)*
+        ]
+    ) => {
+        $arr[(0 $(+ $used_len)*)..($first_unused_len $(+ $used_len)*)]
+            .copy_from_slice($first_unused_source);
+        array_int! { @iter
+            $arr
+            [
+                $($used_len => $used_source,)*
+                $first_unused_len => $first_unused_source,
+            ]
+            [$($rest_unused_len => $rest_unused_source,)*]
+        }
+    };
 }

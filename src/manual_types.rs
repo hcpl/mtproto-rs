@@ -9,6 +9,7 @@ use tl::dynamic::TLObject;
 pub type Object = Box<TLObject>;
 //pub use tl::dynamic::LengthAndObject;
 
+/// A signed 256-bit number.
 #[derive(
     Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd,
     Serialize, Deserialize, MtProtoSized,
@@ -23,14 +24,26 @@ pub struct I256 {
 }
 
 impl I256 {
-    pub fn from_parts(lo: u128, hi: i128) -> I256 {
-        I256 { lo, hi }
+    /// Constructs a new 256-bit integer from a 128-bit integer.
+    pub fn new(n: i128) -> I256 {
+        I256 {
+            hi: n >> 127,
+            lo: n as u128,
+        }
     }
 
+    /// Constructs a new 256-bit integer from the high-128-bit and low-128-bit
+    /// parts.
+    pub fn from_parts(hi: i128, lo: u128) -> I256 {
+        I256 { hi, lo }
+    }
+
+    /// Fetch the lower-128-bit of the number.
     pub fn low128(self) -> u128 {
         self.lo
     }
 
+    /// Fetch the higher-128-bit of the number.
     pub fn high128(self) -> i128 {
         self.hi
     }
@@ -101,7 +114,7 @@ impl rand::distributions::Distribution<I256> for rand::distributions::Standard {
         let lo = self.sample(rng);
         let hi = self.sample(rng);
 
-        I256 { lo, hi }
+        I256 { hi, lo }
     }
 }
 

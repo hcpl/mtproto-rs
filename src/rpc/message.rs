@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use serde::ser::{self, Error as SerError, Serialize};
 use serde::de::{self, DeserializeOwned, DeserializeSeed, Error as DeError, SeqAccess, Visitor};
-use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, WithSize, UnsizedByteBuf, UnsizedByteBufSeed, size_hint_from_unsized_byte_seq_len};
+use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, WithSize, UnsizedByteBuf, UnsizedByteBufSeed};
 
 use error::{self, ErrorKind};
 
@@ -86,7 +86,7 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
                 let msg_key_size = i128::size_hint(&0i128)?;
                 let minimum_encrypted_data_size = decrypted_data.size_hint()?;
                 let actual_encrypted_data_size =
-                    size_hint_from_unsized_byte_seq_len(minimum_encrypted_data_size)?;
+                    size_hint_from_unsized_byte_seq_len(minimum_encrypted_data_size);
 
                 auth_key_id_size + msg_key_size + actual_encrypted_data_size
             },
@@ -94,6 +94,17 @@ impl<T: MtProtoSized> MtProtoSized for Message<T> {
 
         Ok(size_hint)
     }
+}
+
+/// Helper function for everything naturally representable as a byte sequence.
+///
+/// This version **doesn't take** into account the byte sequence length since it is not contained
+/// in the serialized representation of the byte sequence.
+fn size_hint_from_unsized_byte_seq_len(len: usize) -> usize {
+    let size = len + (16 - len % 16) % 16;
+    assert!(size % 16 == 0);
+
+    size
 }
 
 
@@ -143,7 +154,7 @@ impl<T> Message<T> {
                 RawMessage::Encrypted {
                     auth_key_id: auth_key_id,
                     msg_key: msg_key,
-                    encrypted_data: UnsizedByteBuf::new(encrypted_data),
+                    encrypted_data: UnsizedByteBuf::new(encrypted_data)?,
                 }
             },
         };
@@ -205,12 +216,12 @@ impl<T: fmt::Debug + Serialize> Serialize for Message<T> {
 #[derive(Debug)]
 pub struct MessageSeed<T> {
     opt_key: Option<AuthKey>,
-    encrypted_data_len: Option<u32>,
+    encrypted_data_len: Option<usize>,
     phantom: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> MessageSeed<T> {
-    pub fn new(opt_key: Option<AuthKey>, encrypted_data_len: Option<u32>) -> MessageSeed<T> {
+    pub fn new(opt_key: Option<AuthKey>, encrypted_data_len: Option<usize>) -> MessageSeed<T> {
         MessageSeed {
             opt_key: opt_key,
             encrypted_data_len: encrypted_data_len,
@@ -229,7 +240,7 @@ impl<'de, T> DeserializeSeed<'de> for MessageSeed<T>
     {
         struct MessageVisitor<T> {
             opt_key: Option<AuthKey>,
-            encrypted_data_len: Option<u32>,
+            encrypted_data_len: Option<usize>,
             phantom: PhantomData<T>,
         }
 
@@ -270,7 +281,8 @@ impl<'de, T> DeserializeSeed<'de> for MessageSeed<T>
                     let msg_key = seq.next_element()?
                         .ok_or(errconv(ErrorKind::NotEnoughFields("Message::Decrypted", 1)))?;
 
-                    let seed = UnsizedByteBufSeed::new(self.encrypted_data_len.unwrap());
+                    let seed = UnsizedByteBufSeed::new(self.encrypted_data_len.unwrap())
+                        .map_err(A::Error::custom)?;
                     let encrypted_data = seq.next_element_seed(seed)?
                         .ok_or(errconv(ErrorKind::NotEnoughFields("Message::Decrypted", 2)))?;
 

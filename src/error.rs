@@ -70,9 +70,14 @@ error_chain! {
             display("Factorization failed: other reason (pq = {})", pq)
         }
 
-        IntegerCast(num: u64) {
-            description("Error while casting an integer")
-            display("Error while casting an integer: {}", num)
+        SignedIntegerCast(num: i128) {
+            description("error while casting a signed integer")
+            display("error while casting a signed integer: {}", num)
+        }
+
+        UnsignedIntegerCast(num: u128) {
+            description("error while casting an unsigned integer")
+            display("error while casting an unsigned integer: {}", num)
         }
 
         NoAuthKey {
@@ -153,7 +158,7 @@ error_chain! {
         NewNonceDerivedHashMismatch(
             expected_new_nonce: ::I256,
             marker: u8,
-            aux_hash: [u8; 8],
+            aux_hash: i64,
             found_hash: i128
         ) {
             description("new nonce derived hash mismatch")

@@ -140,7 +140,7 @@ fn parse_response<U>(session: &Session,
 
     let encrypted_data_len = match message_type {
         MessageType::PlainText => None,
-        MessageType::Encrypted => Some((len - 24) as u32),
+        MessageType::Encrypted => Some(len - 24),
     };
 
     if let Some(variant_names) = U::all_enum_variant_names() {

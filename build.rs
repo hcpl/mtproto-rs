@@ -48,7 +48,7 @@ fn collect_input() -> error::Result<String> {
     Ok(input)
 }
 
-fn run() -> error::Result<()> {
+fn main() -> error::Result<()> {
     env_logger::try_init()?;
 
     let input = collect_input()?;
@@ -64,5 +64,3 @@ fn run() -> error::Result<()> {
 
     Ok(())
 }
-
-quick_main!(run);
