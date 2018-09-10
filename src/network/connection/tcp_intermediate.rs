@@ -12,11 +12,12 @@ use tokio_io;
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::network::connection::common::Connection;
 use ::network::connection::server::TCP_SERVER_ADDRS;
 use ::network::connection::tcp_common;
 use ::network::state::{MessagePurpose, State};
+use ::tl::TLObject;
+use ::tl::message::{Message, MessageCommon, MessagePlain};
 
 
 #[derive(Debug)]
@@ -35,7 +36,7 @@ impl ConnectionTcpIntermediate {
         }
 
         Box::new(TcpStream::connect(&server_addr).map(move |socket| {
-            Self { socket, server_addr, is_first_request: false }
+            Self { socket, server_addr, is_first_request: true }
         }).map_err(Into::into))
     }
 
@@ -84,6 +85,30 @@ impl ConnectionTcpIntermediate {
                     futures::future::ok((conn, state, response))
                 })
         }))
+    }
+}
+
+impl Connection for ConnectionTcpIntermediate {
+    type Addr = SocketAddr;
+
+    fn new(addr: SocketAddr) -> Box<Future<Item = Self, Error = error::Error> + Send> {
+        Self::new(addr)
+    }
+
+    fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request_plain(state, request_data, purpose)
+    }
+
+    fn request<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request(state, request_data, purpose)
     }
 }
 

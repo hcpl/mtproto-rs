@@ -131,11 +131,6 @@ error_chain! {
             display("Unknown HTML error structure:\n{}", html)
         }
 
-        ResponseMessageTypeMismatch(expected: ::rpc::MessageType, found: ::rpc::MessageType) {
-            description("Response message type mismatch")
-            display("Response message type mismatch: (expected {:?}, found {:?})", expected, found)
-        }
-
         NonceMismatch(expected: i128, found: i128) {
             description("nonce mismatch")
             display("nonce mismatch (expected {:x}, found {:x})", expected, found)

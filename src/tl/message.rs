@@ -6,9 +6,8 @@ use std::marker::PhantomData;
 use byteorder::{ByteOrder, LittleEndian};
 use openssl::{aes, symm};
 use rand::{self, RngCore};
-use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
+use serde::de::{self, Deserialize, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
 use serde::ser::Serialize;
-use serde_bytes::ByteBuf;
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, UnsizedByteBuf, UnsizedByteBufSeed, WithSize};
 
 use ::error::{self, ErrorKind};
@@ -29,21 +28,23 @@ pub struct MessagePlain<T> {
     body: WithSize<Boxed<T>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, MtProtoSized)]
+#[derive(Debug, Serialize, MtProtoSized)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct RawMessagePlain {
     auth_key_id: i64,
     message_id: i64,
     message_data_len: u32,
-    message_data: ByteBuf,
+    message_data: UnsizedByteBuf,
 }
 
 impl<T: Serialize + MtProtoSized> MessagePlain<T> {
     pub fn to_raw(&self) -> error::Result<RawMessagePlain> {
         let Self { message_id, ref body } = *self;
 
-        let message_data_len = safe_uint_cast::<usize, u32>(body.size_hint()?)?;
-        let message_data = ByteBuf::from(serde_mtproto::to_bytes(body.inner())?);
+        let message_data_len = safe_uint_cast::<usize, u32>(body.inner().size_hint()?)?;
+        let message_data = UnsizedByteBuf::new(serde_mtproto::to_bytes(body.inner())?)?;
+
+        debug!("Resulting message data: len = {} --- {:?}", message_data_len, message_data);
 
         Ok(RawMessagePlain {
             auth_key_id: 0,
@@ -54,8 +55,8 @@ impl<T: Serialize + MtProtoSized> MessagePlain<T> {
     }
 }
 
-impl<T: DeserializeOwned + Identifiable + MtProtoSized> MessagePlain<T> {
-    pub fn from_raw(raw: RawMessagePlain) -> error::Result<Self> {
+impl<T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized> MessagePlain<T> {
+    pub fn from_raw(raw: RawMessagePlain, enum_variant_ids: &[&'static str]) -> error::Result<Self> {
         let RawMessagePlain {
             auth_key_id,
             message_id,
@@ -72,11 +73,56 @@ impl<T: DeserializeOwned + Identifiable + MtProtoSized> MessagePlain<T> {
             panic!("message data length mismatch");  // FIXME
         }
 
-        let body_inner = serde_mtproto::from_bytes(&message_data, &[])?;
+        let body_inner = serde_mtproto::from_bytes(message_data.inner(), enum_variant_ids)?;
+        debug!("Resulting body: {:?}", body_inner);
+
         let body = WithSize::new(body_inner)
             .unwrap_or_else(|_| unreachable!("message data length should be no more than 0xFFFF_FFFF"));
 
         Ok(Self { message_id, body })
+    }
+}
+
+impl<'de> Deserialize<'de> for RawMessagePlain {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct RawMessagePlainVisitor;
+
+        impl<'de> de::Visitor<'de> for RawMessagePlainVisitor {
+            type Value = RawMessagePlain;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("raw message data")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<RawMessagePlain, A::Error>
+                where A: de::SeqAccess<'de>
+            {
+                let auth_key_id = seq.next_element()?.ok_or_else(|| unimplemented!())?;
+                let message_id = seq.next_element()?.ok_or_else(|| unimplemented!())?;
+                let message_data_len = seq.next_element()?.ok_or_else(|| unimplemented!())?;
+
+                let message_data_len_usize = safe_uint_cast::<u32, usize>(message_data_len)
+                    .map_err(A::Error::custom)?;
+                let message_data_seed = UnsizedByteBufSeed::new(message_data_len_usize)
+                    .map_err(A::Error::custom)?;
+                let message_data = seq.next_element_seed(message_data_seed)?.ok_or_else(|| unimplemented!())?;
+
+                Ok(RawMessagePlain { auth_key_id, message_id, message_data_len, message_data })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "RawMessagePlain",
+            &[
+                "auth_key_id",
+                "message_id",
+                "message_data_len",
+                "message_data",
+            ],
+            RawMessagePlainVisitor,
+        )
     }
 }
 
@@ -564,13 +610,13 @@ fn calc_key_v2(auth_key_raw: &[u8; 256], msg_key: i128, mode: symm::Mode) -> err
 
 
 pub trait MessageCommon<T>: fmt::Debug + Sized + Send + private::MessageCommonSealed {
-    type Raw: Serialize + MtProtoSized;
+    type Raw: fmt::Debug + Serialize + MtProtoSized;
     type RawSeed: for<'de> RawMessageSeedCommon<'de, Value = Self::Raw>;
 
     fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self>;
     fn to_raw(&self, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self::Raw>
         where T: Serialize;
-    fn from_raw(raw: Self::Raw, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self>
+    fn from_raw(raw: Self::Raw, raw_key: &[u8; 256], version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned;
     fn set_message_id(&mut self, message_id: i64);
     fn encrypted_data_len(len: usize) -> Option<usize>;
@@ -596,13 +642,13 @@ impl<T> MessageCommon<T> for MessagePlain<T>
         self.to_raw()
     }
 
-    fn from_raw(raw: RawMessagePlain, _raw_key: &[u8; 256], _version: ProtocolVersion) -> error::Result<Self>
+    fn from_raw(raw: RawMessagePlain, _raw_key: &[u8; 256], _version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned
     {
         // NOTE: `Self::from_raw` triggers rustc error E0061 --- probably
         // because the compiler associates `Self` only with the `MessageCommon`
         // trait and not with `MessagePlain` as well
-        MessagePlain::from_raw(raw)
+        MessagePlain::from_raw(raw, enum_variant_ids)
     }
 
     fn set_message_id(&mut self, message_id: i64) {
@@ -642,7 +688,7 @@ impl<T> MessageCommon<T> for Message<T>
         self.to_raw(raw_key, version)
     }
 
-    fn from_raw(raw: RawMessage, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self>
+    fn from_raw(raw: RawMessage, raw_key: &[u8; 256], version: ProtocolVersion, _enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned
     {
         Self::from_raw(raw, raw_key, version)
@@ -707,8 +753,19 @@ mod tests {
             body: WithSize::new(Boxed::new("foo".to_owned())).unwrap(),
         };
 
+        const RAW_MSG_PLAIN_SERIALIZED: &[u8] = &[
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            8, 0, 0, 0,
+            0x24, 0x6e, 0x28, 0xb5,
+            3, b'f', b'o', b'o',
+        ];
+
         let raw_msg_plain = msg_plain.to_raw().unwrap();
         let raw_msg_plain_serialized = serde_mtproto::to_bytes(&raw_msg_plain).unwrap();
+
+        assert_eq!(raw_msg_plain_serialized, RAW_MSG_PLAIN_SERIALIZED);
+
         let raw_msg_plain2 = serde_mtproto::from_bytes(&raw_msg_plain_serialized, &[]).unwrap();
 
         assert_eq!(raw_msg_plain, raw_msg_plain2);
@@ -767,10 +824,29 @@ mod tests {
             body: WithSize::new(Boxed::new("baz".to_owned())).unwrap(),
         };
 
+        const RAW_MSG_DATA_SERIALIZED: &[u8] = &[
+            56, 255, 255, 255, 255, 255, 255, 255,
+            16, 39, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 128,
+            255, 255, 255, 255,
+            8, 0, 0, 0,
+            0x24, 0x6e, 0x28, 0xb5,
+            3, b'b', b'a', b'z',
+        ];
+
         fn do_roundtrip(msg_data: &MessageData<String>, version: ProtocolVersion) {
             let raw_msg_data = msg_data.to_raw(version).unwrap();
             let raw_msg_data_seed = RawMessageDataSeed { version };
             let raw_msg_data_serialized = serde_mtproto::to_bytes(&raw_msg_data).unwrap();
+
+            let padding_offset = match version {
+                ProtocolVersion::V1 => (16 - RAW_MSG_DATA_SERIALIZED.len() % 16) % 16,
+                ProtocolVersion::V2 => (20 - RAW_MSG_DATA_SERIALIZED.len() % 16) % 16 + 12,
+            };
+
+            let padding_pos = raw_msg_data_serialized.len() - padding_offset;
+            assert_eq!(&raw_msg_data_serialized[0..padding_pos], RAW_MSG_DATA_SERIALIZED);
+
             let raw_msg_data_deserialized =
                 serde_mtproto::from_bytes_seed(raw_msg_data_seed, &raw_msg_data_serialized, &[]).unwrap();
 

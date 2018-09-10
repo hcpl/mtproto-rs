@@ -16,14 +16,7 @@ use tl::dynamic::TLObject;
 
 
 pub mod auth;
-pub mod connection;
 pub mod encryption;
-pub mod message;
-pub mod session;
-mod utils;
-
-pub use self::message::{Message, MessageType};
-pub use self::session::Session;
 
 
 pub trait RpcFunction: ErasedSerialize {

@@ -1,15 +1,14 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
-use futures::{Future, Poll};
+use futures::{self, Future, Poll};
 use openssl::{aes, bn, symm};
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
 use ::error::{self, ErrorKind};
-use ::rpc::{MessageType, Session};
-use ::rpc::connection::ConnectionConfig;
+use ::network::connection::Connection;
+use ::network::state::{MessagePurpose, State};
 use ::rpc::encryption::asymm;
-use ::rpc::session::SessionConnection;
 use ::schema;
 use ::utils::{
     little_endian_i128_from_array,
@@ -48,9 +47,8 @@ impl Future for AuthFuture {
 
 
 /// Combine all authorization steps defined below.
-pub fn auth_with_session(conn_config: ConnectionConfig, session: Session) -> AuthFuture {
-    let fut = session.connect(conn_config)
-        .map(|session_conn| Step1Input { session_conn })
+pub fn auth_with_state<C: Connection>(conn: C, state: State) -> AuthFuture {
+    let fut = futures::future::ok(Step1Input { conn, state })
         .and_then(auth_step1)
         .and_then(auth_step2)
         .and_then(auth_step3)
@@ -61,39 +59,41 @@ pub fn auth_with_session(conn_config: ConnectionConfig, session: Session) -> Aut
     }
 }
 
-struct Step1Input {
-    session_conn: SessionConnection,
+struct Step1Input<C: Connection> {
+    conn: C,
+    state: State,
 }
 
 /// Step 1: DH exchange initiation using PQ request
-fn auth_step1(input: Step1Input)
-    -> Box<Future<Item = Step2Input, Error = error::Error> + Send>
+fn auth_step1<C: Connection>(input: Step1Input<C>)
+    -> Box<Future<Item = Step2Input<C>, Error = error::Error> + Send>
 {
     let nonce = rand::random();
     let req_pq = schema::rpc::req_pq { nonce };
 
     info!("Sending PQ request: {:#?}", req_pq);
-    let request = input.session_conn.request(req_pq, MessageType::PlainText, MessageType::PlainText);
+    let request = input.conn.request_plain(input.state, req_pq, MessagePurpose::Content);
 
-    Box::new(request.map(move |(session_conn, res_pq)| {
-        Step2Input { session_conn, res_pq, nonce }
+    Box::new(request.map(move |(conn, state, res_pq)| {
+        Step2Input { conn, state, res_pq, nonce }
     }))
 }
 
-struct Step2Input {
-    session_conn: SessionConnection,
+struct Step2Input<C: Connection> {
+    conn: C,
+    state: State,
     res_pq: schema::ResPQ,
     nonce: i128,
 }
 
 /// Step 2: Presenting PQ proof of work & server authentication
-fn auth_step2(input: Step2Input)
-    -> Box<Future<Item = Step3Input, Error = error::Error> + Send>
+fn auth_step2<C: Connection>(input: Step2Input<C>)
+    -> Box<Future<Item = Step3Input<C>, Error = error::Error> + Send>
 {
-    fn prepare_step2(input: Step2Input)
-        -> error::Result<(SessionConnection, schema::rpc::req_DH_params, i128, i128, I256)>
+    fn prepare_step2<C: Connection>(input: Step2Input<C>)
+        -> error::Result<(C, State, schema::rpc::req_DH_params, i128, i128, I256)>
     {
-        let Step2Input { session_conn, res_pq, nonce } = input;
+        let Step2Input { conn, state, res_pq, nonce } = input;
 
         info!("Received PQ response: {:#?}", res_pq);
 
@@ -155,17 +155,18 @@ fn auth_step2(input: Step2Input)
             //encrypted_data: encrypted_data2.into(),
         };
 
-        Ok((session_conn, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
+        Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
     }
 
-    let (session_conn, req_dh_params, nonce, server_nonce, new_nonce) = tryf!(prepare_step2(input));
+    let (conn, state, req_dh_params, nonce, server_nonce, new_nonce) = tryf!(prepare_step2(input));
 
     info!("Sending DH key exchange request: {:?}", req_dh_params);
-    let request = session_conn.request(req_dh_params, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request_plain(state, req_dh_params, MessagePurpose::Content);
 
-    Box::new(request.map(move |(session_conn, server_dh_params)| {
+    Box::new(request.map(move |(conn, state, server_dh_params)| {
         Step3Input {
-            session_conn,
+            conn,
+            state,
             server_dh_params,
             nonce,
             server_nonce,
@@ -174,8 +175,9 @@ fn auth_step2(input: Step2Input)
     }))
 }
 
-struct Step3Input {
-    session_conn: SessionConnection,
+struct Step3Input<C: Connection> {
+    conn: C,
+    state: State,
     server_dh_params: schema::Server_DH_Params,
     nonce: i128,
     server_nonce: i128,
@@ -183,13 +185,13 @@ struct Step3Input {
 }
 
 /// Step 3: DH key exchange complete
-fn auth_step3(input: Step3Input)
+fn auth_step3<C: Connection>(input: Step3Input<C>)
     -> Box<Future<Item = Step4Input, Error = error::Error> + Send>
 {
-    fn prepare_step3(input: Step3Input)
-        -> error::Result<(SessionConnection, schema::rpc::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
+    fn prepare_step3<C: Connection>(input: Step3Input<C>)
+        -> error::Result<(C, State, schema::rpc::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
     {
-        let Step3Input { session_conn, server_dh_params, nonce, server_nonce, new_nonce } = input;
+        let Step3Input { conn, state, server_dh_params, nonce, server_nonce, new_nonce } = input;
 
         info!("Received server DH parameters: {:#?}", server_dh_params);
 
@@ -299,17 +301,17 @@ fn auth_step3(input: Step3Input)
                 let local_timestamp = Utc::now().timestamp() as i32;
                 let time_offset = server_dh_inner.server_time - local_timestamp;
 
-                Ok((session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset))
+                Ok((conn, state, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset))
             },
         }
     }
 
-    let (session_conn, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset) =
+    let (conn, state, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset) =
         tryf!(prepare_step3(input));
 
-    let request = session_conn.request(set_client_dh_params, MessageType::PlainText, MessageType::PlainText);
+    let request = conn.request_plain(state, set_client_dh_params, MessagePurpose::Content);
 
-    Box::new(request.map(move |(_session_conn, set_client_dh_params_answer)| {
+    Box::new(request.map(move |(_conn, _state, set_client_dh_params_answer)| {
         Step4Input {
             set_client_dh_params_answer,
             nonce,

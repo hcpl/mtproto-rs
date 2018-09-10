@@ -10,10 +10,11 @@ use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 
 use ::error::{self, ErrorKind};
-use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageSeedCommon};
+use ::network::connection::common::Connection;
 use ::network::connection::server::HTTP_SERVER_ADDRS;
 use ::network::state::{MessagePurpose, State};
+use ::tl::TLObject;
+use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageSeedCommon};
 
 
 pub struct ConnectionHttp {
@@ -55,6 +56,7 @@ impl ConnectionHttp {
               N: MessageCommon<U> + 'static,
     {
         let request_message = tryf!(state.create_message::<T, M>(request_data, purpose));
+        debug!("Message to send: {:#?}", request_message);
 
         let http_request = tryf!(create_http_request(&state, request_message, &self.server_addr));
         debug!("HTTP request: {:?}", &http_request);
@@ -77,6 +79,30 @@ impl ConnectionHttp {
                     futures::future::ok((conn, state, msg.into_body()))
                 })
         }))
+    }
+}
+
+impl Connection for ConnectionHttp {
+    type Addr = hyper::Uri;
+
+    fn new(addr: hyper::Uri) -> Box<Future<Item = Self, Error = error::Error> + Send> {
+        Box::new(futures::future::ok(Self::new(addr)))
+    }
+
+    fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request_plain(state, request_data, purpose)
+    }
+
+    fn request<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request(state, request_data, purpose)
     }
 }
 
@@ -132,29 +158,23 @@ fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N
     let encrypted_data_len = N::encrypted_data_len(len);
 
     macro_rules! deserialize_response {
-        ($vnames:expr) => {
+        ($vnames:expr) => {{
             serde_mtproto::from_bytes_seed(N::RawSeed::new(encrypted_data_len), response_bytes, $vnames)
-        };
+                .map_err(Into::into)
+                .and_then(|raw| N::from_raw(raw, &state.auth_raw_key, state.version, $vnames))
+        }};
     }
 
-    let raw_response = if let Some(variant_names) = U::all_enum_variant_names() {
-        let mut result = None;
-
+    if let Some(variant_names) = U::all_enum_variant_names() {
         // FIXME: Lossy error management
         for vname in variant_names {
-            if let Ok(r) = deserialize_response!(&[vname]) {
-                result = Some(r);
-                break;
+            if let Ok(msg) = deserialize_response!(&[vname]) {
+                return Ok(msg);
             }
         }
 
-        match result {
-            Some(r) => r,
-            None => bail!(ErrorKind::BadTcpMessage(len)),
-        }
+        bail!(ErrorKind::BadTcpMessage(len))
     } else {
-        deserialize_response!(&[])?
-    };
-
-    N::from_raw(raw_response, &state.auth_raw_key, state.version)
+        deserialize_response!(&[])
+    }
 }

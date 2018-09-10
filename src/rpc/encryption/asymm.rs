@@ -225,7 +225,7 @@ pub fn decompose_pq(pq: u64) -> error::Result<(u32, u32)> {
         let p = safe_uint_cast::<u64, u32>(pq_sqrt + y)?;
         let q = safe_uint_cast::<u64, u32>(if pq_sqrt > y { pq_sqrt - y } else { y - pq_sqrt })?;
         let (p, q) = if p > q {(q, p)} else {(p, q)};
-        debug!("decompose_pq({}) = ({}, {})", pq, p, q);
+        trace!("decompose_pq({}) = ({}, {})", pq, p, q);
         return Ok((p, q))
     }
 }

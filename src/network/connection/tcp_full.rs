@@ -12,11 +12,12 @@ use tokio_io;
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::network::connection::common::Connection;
 use ::network::connection::server::TCP_SERVER_ADDRS;
 use ::network::connection::tcp_common;
 use ::network::state::{MessagePurpose, State};
+use ::tl::TLObject;
+use ::tl::message::{Message, MessageCommon, MessagePlain};
 
 
 #[derive(Debug)]
@@ -87,6 +88,30 @@ impl ConnectionTcpFull {
     }
 }
 
+impl Connection for ConnectionTcpFull {
+    type Addr = SocketAddr;
+
+    fn new(addr: SocketAddr) -> Box<Future<Item = Self, Error = error::Error> + Send> {
+        Self::new(addr)
+    }
+
+    fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request_plain(state, request_data, purpose)
+    }
+
+    fn request<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        where T: fmt::Debug + Serialize + TLObject + Send,
+              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.request(state, request_data, purpose)
+    }
+}
+
 
 fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_counter: &mut u32)
     -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
@@ -94,6 +119,7 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_coun
           M: MessageCommon<T>,
 {
     let raw_message = tryf!(message.to_raw(&state.auth_raw_key, state.version));
+
     let size = tryf!(raw_message.size_hint()) + 12;  // FIXME: May overflow on 32-bit systems
     let data = if size <= 0xff_ff_ff_ff {
         let mut buf = vec![0; size];

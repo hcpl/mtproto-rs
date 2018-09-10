@@ -29,30 +29,24 @@ pub(crate) fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> erro
     let encrypted_data_len = N::encrypted_data_len(len);
 
     macro_rules! deserialize_response {
-        ($vnames:expr) => {
+        ($vnames:expr) => {{
             serde_mtproto::from_bytes_seed(N::RawSeed::new(encrypted_data_len), response_bytes, $vnames)
-        };
+                .map_err(Into::into)
+                .and_then(|raw| N::from_raw(raw, &state.auth_raw_key, state.version, $vnames))
+        }};
     }
 
-    let raw_response = if let Some(variant_names) = U::all_enum_variant_names() {
-        let mut result = None;
-
+    if let Some(variant_names) = U::all_enum_variant_names() {
         // FIXME: Lossy error management
         for vname in variant_names {
-            if let Ok(r) = deserialize_response!(&[vname]) {
-                result = Some(r);
-                break;
+            if let Ok(msg) = deserialize_response!(&[vname]) {
+                return Ok(msg);
             }
         }
 
-        match result {
-            Some(r) => r,
-            None => bail!(ErrorKind::BadTcpMessage(len)),
-        }
+        bail!(ErrorKind::BadTcpMessage(len))
     } else {
-        deserialize_response!(&[])?
-    };
-
-    N::from_raw(raw_response, &state.auth_raw_key, state.version)
+        deserialize_response!(&[])
+    }
 }
 
