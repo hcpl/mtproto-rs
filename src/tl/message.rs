@@ -1,6 +1,7 @@
 //! Message-related definitions.
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use byteorder::{ByteOrder, LittleEndian};
 use openssl::{aes, symm};
@@ -11,6 +12,7 @@ use serde_bytes::ByteBuf;
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, UnsizedByteBuf, UnsizedByteBufSeed, WithSize};
 
 use ::error::{self, ErrorKind};
+use ::protocol::ProtocolVersion;
 use ::utils::{
     little_endian_i128_from_array,
     little_endian_i128_into_array,
@@ -18,13 +20,6 @@ use ::utils::{
     sha1_from_bytes,
     sha256_from_bytes,
 };
-
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum ProtocolVersion {
-    V1,
-    V2,
-}
 
 
 #[derive(Debug)]
@@ -282,6 +277,7 @@ impl<T: DeserializeOwned + Identifiable + MtProtoSized> MessageData<T> {
         } = raw;
 
         check_padding_size(padding.inner().len(), version)?;
+        // TODO: check validity of `salt`, `session_id`, `message_id` and `seq_no`
 
         if message_data_len != safe_uint_cast::<usize, u32>(message_data.size_hint()?)? {
             unimplemented!();
@@ -567,12 +563,52 @@ fn calc_key_v2(auth_key_raw: &[u8; 256], msg_key: i128, mode: symm::Mode) -> err
 }
 
 
-pub(crate) trait MessageCommon<T>: fmt::Debug + Send + private::Sealed {
+pub trait MessageCommon<T>: fmt::Debug + Sized + Send + private::MessageCommonSealed {
+    type Raw: Serialize + MtProtoSized;
+    type RawSeed: for<'de> RawMessageSeedCommon<'de, Value = Self::Raw>;
+
+    fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self>;
+    fn to_raw(&self, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self::Raw>
+        where T: Serialize;
+    fn from_raw(raw: Self::Raw, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self>
+        where T: DeserializeOwned;
+    fn set_message_id(&mut self, message_id: i64);
     fn encrypted_data_len(len: usize) -> Option<usize>;
     fn into_body(self) -> T;
 }
 
-impl<T: fmt::Debug + Serialize + Identifiable + MtProtoSized + Send> MessageCommon<T> for MessagePlain<T> {
+impl<T> MessageCommon<T> for MessagePlain<T>
+    where T: fmt::Debug + Identifiable + MtProtoSized + Send
+{
+    type Raw = RawMessagePlain;
+    type RawSeed = PhantomData<RawMessagePlain>;
+
+    fn new(_salt: i64, _session_id: i64, message_id: i64, _seq_no: u32, obj: T) -> error::Result<Self> {
+        Ok(MessagePlain {
+            message_id,
+            body: WithSize::new(Boxed::new(obj))?,
+        })
+    }
+
+    fn to_raw(&self, _raw_key: &[u8; 256], _version: ProtocolVersion) -> error::Result<RawMessagePlain>
+        where T: Serialize
+    {
+        self.to_raw()
+    }
+
+    fn from_raw(raw: RawMessagePlain, _raw_key: &[u8; 256], _version: ProtocolVersion) -> error::Result<Self>
+        where T: DeserializeOwned
+    {
+        // NOTE: `Self::from_raw` triggers rustc error E0061 --- probably
+        // because the compiler associates `Self` only with the `MessageCommon`
+        // trait and not with `MessagePlain` as well
+        MessagePlain::from_raw(raw)
+    }
+
+    fn set_message_id(&mut self, message_id: i64) {
+        self.message_id = message_id;
+    }
+
     fn encrypted_data_len(_len: usize) -> Option<usize> {
         None
     }
@@ -582,7 +618,40 @@ impl<T: fmt::Debug + Serialize + Identifiable + MtProtoSized + Send> MessageComm
     }
 }
 
-impl<T: fmt::Debug + Serialize + Identifiable + MtProtoSized + Send> MessageCommon<T> for Message<T> {
+impl<T> MessageCommon<T> for Message<T>
+    where T: fmt::Debug + Identifiable + MtProtoSized + Send
+{
+    type Raw = RawMessage;
+    type RawSeed = RawMessageSeed;
+
+    fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self> {
+        Ok(Message {
+            data: MessageData {
+                salt,
+                session_id,
+                message_id,
+                seq_no,
+                body: WithSize::new(Boxed::new(obj))?,
+            }
+        })
+    }
+
+    fn to_raw(&self, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<RawMessage>
+        where T: Serialize
+    {
+        self.to_raw(raw_key, version)
+    }
+
+    fn from_raw(raw: RawMessage, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<Self>
+        where T: DeserializeOwned
+    {
+        Self::from_raw(raw, raw_key, version)
+    }
+
+    fn set_message_id(&mut self, message_id: i64) {
+        self.data.message_id = message_id;
+    }
+
     fn encrypted_data_len(len: usize) -> Option<usize> {
         Some(len - 24)
     }
@@ -592,11 +661,38 @@ impl<T: fmt::Debug + Serialize + Identifiable + MtProtoSized + Send> MessageComm
     }
 }
 
-mod private {
-    pub(crate) trait Sealed {}
 
-    impl<T> Sealed for super::MessagePlain<T> {}
-    impl<T> Sealed for super::Message<T> {}
+pub trait RawMessageSeedCommon<'de>: DeserializeSeed<'de> + Sized + private::RawMessageSeedCommonSealed {
+    fn new(encrypted_data_len: Option<usize>) -> Self;
+}
+
+impl<'de> RawMessageSeedCommon<'de> for PhantomData<RawMessagePlain> {
+    fn new(_encrypted_data_len: Option<usize>) -> Self {
+        PhantomData
+    }
+}
+
+impl<'de> RawMessageSeedCommon<'de> for RawMessageSeed {
+    fn new(encrypted_data_len: Option<usize>) -> Self {
+        RawMessageSeed { encrypted_data_len: encrypted_data_len.unwrap() }
+    }
+}
+
+
+mod private {
+    use super::*;
+
+
+    pub trait MessageCommonSealed {}
+
+    impl<T> MessageCommonSealed for MessagePlain<T> {}
+    impl<T> MessageCommonSealed for Message<T> {}
+
+
+    pub trait RawMessageSeedCommonSealed {}
+
+    impl RawMessageSeedCommonSealed for PhantomData<RawMessagePlain> {}
+    impl RawMessageSeedCommonSealed for RawMessageSeed {}
 }
 
 

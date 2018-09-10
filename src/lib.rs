@@ -39,6 +39,8 @@ mod manual_types;
 mod utils;
 
 pub mod error;
+pub mod network;
+pub mod protocol;
 pub mod rpc;
 pub mod schema;
 pub mod tl;
