@@ -6,6 +6,7 @@ extern crate log;
 extern crate tl_codegen;
 
 
+use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ mod error {
         foreign_links {
             Io(::std::io::Error);
             SetLogger(::log::SetLoggerError);
+            Var(::std::env::VarError);
         }
     }
 }
@@ -24,7 +26,7 @@ mod error {
 
 const TL_SCHEMA_DIR:       &'static str = "./tl";
 const TL_SCHEMA_LIST_FILE: &'static str = "./tl/tl-schema-list.txt";
-const RUST_SCHEMA_FILE:    &'static str = "./src/schema.rs";
+const RUST_SCHEMA_FILE:    &'static str = "./schema.rs";
 
 fn collect_input() -> error::Result<String> {
     let mut tl_files = BufReader::new(File::open(TL_SCHEMA_LIST_FILE)?).lines().filter_map(|line| {
@@ -55,11 +57,12 @@ fn main() -> error::Result<()> {
     let code = tl_codegen::generate_code_for(&input);
     debug!("Code size: {} bytes", code.as_str().len());
 
-    File::create(RUST_SCHEMA_FILE)?.write_all(code.as_str().as_bytes())?;
-    debug!("Successful write to {}", RUST_SCHEMA_FILE);
+    let rust_schema_file = Path::new(&env::var("OUT_DIR")?).join(RUST_SCHEMA_FILE);
+    File::create(&rust_schema_file)?.write_all(code.as_str().as_bytes())?;
+    debug!("Successful write to {:?}", rust_schema_file);
 
     Command::new("rustfmt")
-        .arg(RUST_SCHEMA_FILE)
+        .arg(&rust_schema_file)
         .status()?;
 
     Ok(())

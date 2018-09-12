@@ -42,8 +42,10 @@ pub mod error;
 pub mod network;
 pub mod protocol;
 pub mod rpc;
-pub mod schema;
 pub mod tl;
+
+// Use this hack because `include!` and top-level inner attributes don't mix well
+include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 
 
 pub use error::{Error, ErrorKind, Result, ResultExt};
