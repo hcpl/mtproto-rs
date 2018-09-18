@@ -4,17 +4,16 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use byteorder::{ByteOrder, LittleEndian};
-use openssl::{aes, symm};
 use rand::{self, RngCore};
 use serde::de::{self, Deserialize, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
 use serde::ser::Serialize;
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, UnsizedByteBuf, UnsizedByteBufSeed, WithSize};
 
+use ::crypto;
 use ::error::{self, ErrorKind};
 use ::protocol::ProtocolVersion;
 use ::utils::{
     little_endian_i128_from_array,
-    little_endian_i128_into_array,
     safe_uint_cast,
     sha1_from_bytes,
     sha256_from_bytes,
@@ -452,11 +451,8 @@ fn pack_message_v1(data_serialized: &[u8], raw_key: &[u8; 256]) -> error::Result
     let msg_key_large = sha1_from_bytes(&[data_serialized])?;
     let msg_key = little_endian_i128_from_array(array_ref!(msg_key_large, 4, 16));
 
-    let aes_params = calc_key_v1(raw_key, msg_key, symm::Mode::Encrypt)?;
-    let aes_key = aes::AesKey::new_encrypt(&aes_params.key).unwrap();
-
-    let mut encrypted_data = vec![0; data_serialized.len()];
-    aes::aes_ige(data_serialized, &mut encrypted_data, &aes_key, &mut aes_params.iv.clone(), symm::Mode::Encrypt);
+    let aes_params = crypto::aes::calc_aes_params_encrypt_v1(raw_key, msg_key)?;
+    let encrypted_data = crypto::aes::aes_ige_encrypt(&aes_params, data_serialized);
 
     Ok(RawMessage {
         auth_key_id,
@@ -472,11 +468,8 @@ fn pack_message_v2(data_serialized: &[u8], raw_key: &[u8; 256]) -> error::Result
     let msg_key_large = sha256_from_bytes(&[array_ref!(raw_key, 88, 32), data_serialized])?;
     let msg_key = little_endian_i128_from_array(array_ref!(msg_key_large, 8, 16));
 
-    let aes_params = calc_key_v2(raw_key, msg_key, symm::Mode::Encrypt)?;
-    let aes_key = aes::AesKey::new_encrypt(&aes_params.key).unwrap();
-
-    let mut encrypted_data = vec![0; data_serialized.len()];
-    aes::aes_ige(data_serialized, &mut encrypted_data, &aes_key, &mut aes_params.iv.clone(), symm::Mode::Encrypt);
+    let aes_params = crypto::aes::calc_aes_params_encrypt_v2(raw_key, msg_key)?;
+    let encrypted_data = crypto::aes::aes_ige_encrypt(&aes_params, data_serialized);
 
     Ok(RawMessage {
         auth_key_id,
@@ -508,11 +501,8 @@ fn unpack_message_v1(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<
         unimplemented!();
     }
 
-    let aes_params = calc_key_v1(raw_key, msg_key, symm::Mode::Encrypt)?;
-    let aes_key = aes::AesKey::new_decrypt(&aes_params.key).unwrap();
-
-    let mut data_serialized = vec![0; encrypted_data.inner().len()];
-    aes::aes_ige(encrypted_data.inner(), &mut data_serialized, &aes_key, &mut aes_params.iv.clone(), symm::Mode::Decrypt);
+    let aes_params = crypto::aes::calc_aes_params_decrypt_v1(raw_key, msg_key)?;
+    let data_serialized = crypto::aes::aes_ige_decrypt(&aes_params, encrypted_data.inner());
 
     let msg_key_large = sha1_from_bytes(&[&data_serialized])?;
     let msg_key_checked = little_endian_i128_from_array(array_ref!(msg_key_large, 4, 16));
@@ -536,13 +526,10 @@ fn unpack_message_v2(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<
         unimplemented!();
     }
 
-    let aes_params = calc_key_v2(raw_key, msg_key, symm::Mode::Encrypt)?;
-    let aes_key = aes::AesKey::new_decrypt(&aes_params.key).unwrap();
+    let aes_params = crypto::aes::calc_aes_params_decrypt_v2(raw_key, msg_key)?;
+    let data_serialized = crypto::aes::aes_ige_decrypt(&aes_params, encrypted_data.inner());
 
-    let mut data_serialized = vec![0; encrypted_data.inner().len()];
-    aes::aes_ige(encrypted_data.inner(), &mut data_serialized, &aes_key, &mut aes_params.iv.clone(), symm::Mode::Decrypt);
-
-    let msg_key_large = sha256_from_bytes(&[array_ref!(raw_key, 88, 32), &data_serialized])?;
+    let msg_key_large = sha256_from_bytes(&[array_ref!(raw_key, 88 + 8, 32), &data_serialized])?;
     let msg_key_checked = little_endian_i128_from_array(array_ref!(msg_key_large, 8, 16));
 
     if msg_key != msg_key_checked {
@@ -551,61 +538,6 @@ fn unpack_message_v2(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<
     }
 
     Ok(data_serialized)
-}
-
-
-struct AesParams {
-    key: [u8; 32],
-    iv: [u8; 32],
-}
-
-fn calc_key_v1(auth_key_raw: &[u8; 256], msg_key: i128, mode: symm::Mode) -> error::Result<AesParams> {
-    let msg_key_bytes = little_endian_i128_into_array(msg_key);
-
-    let mut pos = match mode {
-        symm::Mode::Encrypt => 0,
-        symm::Mode::Decrypt => 8,
-    };
-
-    let mut auth_key_take = |len| {
-        let ret = &auth_key_raw[pos..pos+len];
-        pos += len;
-        ret
-    };
-
-    let sha1_a = sha1_from_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
-    let sha1_b = sha1_from_bytes(&[auth_key_take(16), &msg_key_bytes, auth_key_take(16)])?;
-    let sha1_c = sha1_from_bytes(&[auth_key_take(32), &msg_key_bytes])?;
-    let sha1_d = sha1_from_bytes(&[&msg_key_bytes, auth_key_take(32)])?;
-
-    Ok(AesParams {
-        key: array_int! { 8  => &sha1_a[0..8],  12 => &sha1_b[8..20], 12 => &sha1_c[4..16] },
-        iv:  array_int! { 12 => &sha1_a[8..20], 8  => &sha1_b[0..8],  4  => &sha1_c[16..20], 8 => &sha1_d[0..8] },
-    })
-}
-
-fn calc_key_v2(auth_key_raw: &[u8; 256], msg_key: i128, mode: symm::Mode) -> error::Result<AesParams> {
-    let msg_key_bytes = little_endian_i128_into_array(msg_key);
-
-    let mut pos = match mode {
-        symm::Mode::Encrypt => 0,
-        symm::Mode::Decrypt => 8,
-    };
-
-    let mut auth_key_take = |len| {
-        let ret = &auth_key_raw[pos..pos+len];
-        pos += len;
-        ret
-    };
-
-    let sha256_a = sha256_from_bytes(&[&msg_key_bytes, auth_key_take(36)])?;
-    auth_key_take(4);
-    let sha256_b = sha256_from_bytes(&[auth_key_take(36), &msg_key_bytes])?;
-
-    Ok(AesParams {
-        key: array_int! { 8 => &sha256_a[0..8], 16 => &sha256_b[8..24], 8 => &sha256_a[24..32] },
-        iv:  array_int! { 8 => &sha256_b[0..8], 16 => &sha256_a[8..24], 8 => &sha256_b[24..32] },
-    })
 }
 
 
@@ -797,7 +729,8 @@ mod tests {
             let raw_msg_serialized = serde_mtproto::to_bytes(&raw_msg).unwrap();
             let raw_msg_deserialized = {
                 let encrypted_data_len = raw_msg.encrypted_data.inner().len();
-                assert!(encrypted_data_len <= u32::max_value() as usize);  // FIXME
+                let max_u32_as_usize = safe_uint_cast::<u32, usize>(u32::max_value()).unwrap();
+                assert!(encrypted_data_len <= max_u32_as_usize);
                 let raw_msg_seed = RawMessageSeed { encrypted_data_len };
 
                 serde_mtproto::from_bytes_seed(raw_msg_seed, &raw_msg_serialized, &[]).unwrap()

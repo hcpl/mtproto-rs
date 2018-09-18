@@ -1,10 +1,11 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
 use futures::{self, Future, Poll};
-use openssl::{aes, bn, symm};
+use openssl::bn;
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
+use ::crypto;
 use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
 use ::network::connection::Connection;
@@ -216,20 +217,22 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 let hash2 = sha1_from_bytes(&[&server_nonce_bytes, &new_nonce_bytes])?;
                 let hash3 = sha1_from_bytes(&[&new_nonce_bytes, &new_nonce_bytes])?;
 
-                let tmp_aes_key = array_int! {
-                    20 => &*hash1,
-                    12 => &hash2[0..12],
-                };
-                let tmp_aes_iv = array_int! {
-                    8  => &hash2[12..20],
-                    20 => &*hash3,
-                    4  => &new_nonce_bytes[0..4],
+                let tmp_aes_params = crypto::aes::AesParams {
+                    key: array_int! {
+                        20 => &*hash1,
+                        12 => &hash2[0..12],
+                    },
+                    iv: array_int! {
+                        8  => &hash2[12..20],
+                        20 => &*hash3,
+                        4  => &new_nonce_bytes[0..4],
+                    },
                 };
 
-                // Key is 256-bit => can unwrap safely
-                let aes_decrypt_key = aes::AesKey::new_decrypt(&tmp_aes_key).unwrap();
-                let mut server_dh_inner_decrypted = vec![0; server_dh_params_ok.encrypted_answer.len()];
-                aes::aes_ige(server_dh_params_ok.encrypted_answer.as_ref(), server_dh_inner_decrypted.as_mut_slice(), &aes_decrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Decrypt);
+                let server_dh_inner_decrypted = crypto::aes::aes_ige_decrypt(
+                    &tmp_aes_params,
+                    &server_dh_params_ok.encrypted_answer,
+                );
 
                 const SHA1_HASH_LENGTH: usize = 20;
                 let (server_dh_inner_server_hash, server_dh_inner_bytes) =
@@ -280,15 +283,15 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                     rand::thread_rng().fill_bytes(random_tail);
                 }
 
-                // Key is 256-bit => can unwrap safely
-                let aes_encrypt_key = aes::AesKey::new_encrypt(&tmp_aes_key).unwrap();
-                let mut encrypted_data = vec![0; client_dh_inner_to_encrypt.len()];
-                aes::aes_ige(&client_dh_inner_to_encrypt, encrypted_data.as_mut_slice(), &aes_encrypt_key, &mut tmp_aes_iv.clone(), symm::Mode::Encrypt);
+                let encrypted_data = crypto::aes::aes_ige_encrypt(
+                    &tmp_aes_params,
+                    &client_dh_inner_to_encrypt,
+                ).into();
 
                 let set_client_dh_params = schema::rpc::set_client_DH_params {
                     nonce,
                     server_nonce,
-                    encrypted_data: encrypted_data.into(),
+                    encrypted_data,
                 };
 
                 let g_a = bn::BigNum::from_slice(&server_dh_inner.g_a)?;
