@@ -4,8 +4,8 @@ use num_traits::int::PrimInt;
 use num_traits::sign::Unsigned;
 use openssl::hash;
 
-use ::I256;
 use ::error::{self, ErrorKind};
+use ::manual_types::i256::I256;
 
 
 pub(crate) fn safe_uint_cast<T, U>(n: T) -> error::Result<U>

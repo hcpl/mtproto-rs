@@ -49,5 +49,4 @@ include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 
 
 pub use error::{Error, ErrorKind, Result, ResultExt};
-pub use manual_types::I256;
 pub use tl::TLObject;

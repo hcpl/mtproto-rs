@@ -142,7 +142,7 @@ error_chain! {
         }
 
         NewNonceHashMismatch(
-            expected_new_nonce: ::I256,
+            expected_new_nonce: ::manual_types::i256::I256,
             found_hash: i128
         ) {
             description("new nonce hash mismatch")
@@ -151,7 +151,7 @@ error_chain! {
         }
 
         NewNonceDerivedHashMismatch(
-            expected_new_nonce: ::I256,
+            expected_new_nonce: ::manual_types::i256::I256,
             marker: u8,
             aux_hash: i64,
             found_hash: i128

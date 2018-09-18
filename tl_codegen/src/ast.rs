@@ -597,7 +597,7 @@ fn names_to_type_ir(names: &[String], type_parameters: &[TypeIr]) -> error::Resu
                 "long"   => TypeIr::copyable(syn::Ty::Path(None, "i64".into())),
                 "int128" => TypeIr::copyable(syn::Ty::Path(None, "i128".into())),
                 "int256" => {
-                    let ty256 = syn_type_from_components(true, vec!["manual_types", "I256"], vec![]);
+                    let ty256 = syn_type_from_components(true, vec!["manual_types", "i256", "I256"], vec![]);
                     TypeIr::copyable(ty256)
                 },
                 "double" => TypeIr::copyable(syn::Ty::Path(None, "f64".into())),

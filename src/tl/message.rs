@@ -770,7 +770,7 @@ mod tests {
 
         assert_eq!(raw_msg_plain, raw_msg_plain2);
 
-        let msg_plain2 = MessagePlain::from_raw(raw_msg_plain).unwrap();
+        let msg_plain2 = MessagePlain::from_raw(raw_msg_plain, &[]).unwrap();
 
         assert_eq!(msg_plain, msg_plain2);
     }
