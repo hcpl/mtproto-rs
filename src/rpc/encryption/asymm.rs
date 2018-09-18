@@ -3,12 +3,13 @@
 use std::fmt;
 
 use byteorder::{LittleEndian, ByteOrder};
-use openssl::{bn, hash, pkey, rsa};
+use openssl::{bn, pkey, rsa};
 use serde_bytes::ByteBuf;
 use serde_mtproto;
 
-use error::{self, ErrorKind};
-use utils::safe_uint_cast;
+use ::crypto::hash::sha1_from_bytes;
+use ::error::{self, ErrorKind};
+use ::utils::safe_uint_cast;
 
 use super::symm::AuthKey;
 use super::utils::{Padding, sha1_and_or_pad};
@@ -102,10 +103,9 @@ impl RsaPublicKey {
         serde_mtproto::to_writer(&mut buf, &ByteBuf::from(n_bytes))?;
         serde_mtproto::to_writer(&mut buf, &ByteBuf::from(e_bytes))?;
 
-        let mut hasher = hash::Hasher::new(hash::MessageDigest::sha1())?;
-        hasher.update(&buf)?;
+        let fingerprint = sha1_from_bytes(&[&buf])?;
 
-        Ok(hasher.finish().map(|b| b.to_vec())?)
+        Ok(fingerprint.to_vec())
     }
 
     pub fn fingerprint(&self) -> error::Result<i64> {

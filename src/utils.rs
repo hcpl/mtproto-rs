@@ -2,7 +2,6 @@ use byteorder::{ByteOrder, LittleEndian};
 use num_traits::cast::cast;
 use num_traits::int::PrimInt;
 use num_traits::sign::Unsigned;
-use openssl::hash;
 
 use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
@@ -63,23 +62,6 @@ fn i128_to_parts(n: i128) -> (i64, u64) {
     let lo = n as u64;
     let hi = (n >> 64) as i64;
     (hi, lo)
-}
-
-
-pub(crate) fn sha1_from_bytes(parts: &[&[u8]]) -> error::Result<hash::DigestBytes> {
-    let mut hasher = hash::Hasher::new(hash::MessageDigest::sha1())?;
-    for part in parts {
-        hasher.update(part)?;
-    }
-    hasher.finish().map_err(Into::into)
-}
-
-pub(crate) fn sha256_from_bytes(parts: &[&[u8]]) -> error::Result<hash::DigestBytes> {
-    let mut hasher = hash::Hasher::new(hash::MessageDigest::sha256())?;
-    for part in parts {
-        hasher.update(part)?;
-    }
-    hasher.finish().map_err(Into::into)
 }
 
 

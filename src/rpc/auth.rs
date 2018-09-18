@@ -6,6 +6,7 @@ use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
 use ::crypto;
+use ::crypto::hash::sha1_from_bytes;
 use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
 use ::network::connection::Connection;
@@ -17,7 +18,6 @@ use ::utils::{
     little_endian_i128_into_array,
     little_endian_i256_into_array,
     little_endian_i256_to_array,
-    sha1_from_bytes,
 };
 
 

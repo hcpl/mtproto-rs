@@ -10,13 +10,12 @@ use serde::ser::Serialize;
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, UnsizedByteBuf, UnsizedByteBufSeed, WithSize};
 
 use ::crypto;
+use ::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
 use ::error::{self, ErrorKind};
 use ::protocol::ProtocolVersion;
 use ::utils::{
     little_endian_i128_from_array,
     safe_uint_cast,
-    sha1_from_bytes,
-    sha256_from_bytes,
 };
 
 

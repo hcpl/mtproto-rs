@@ -1,8 +1,9 @@
 use std::io::{Cursor, Write};
 
-use error::{self, ErrorKind};
 use rand::{self, RngCore};
-use utils::sha1_from_bytes;
+
+use ::crypto::hash::sha1_from_bytes;
+use ::error::{self, ErrorKind};
 
 
 pub(super) enum Padding {

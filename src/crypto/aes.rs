@@ -1,11 +1,8 @@
 use openssl::{aes, symm};
 
+use ::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
 use ::error;
-use ::utils::{
-    little_endian_i128_into_array,
-    sha1_from_bytes,
-    sha256_from_bytes,
-};
+use ::utils::little_endian_i128_into_array;
 
 
 #[derive(Debug)]

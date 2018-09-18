@@ -5,8 +5,9 @@ use std::fmt;
 use byteorder::{ByteOrder, LittleEndian};
 use openssl::{aes, symm};
 
-use error::{self, ErrorKind};
-use utils::{i128_from_parts, little_endian_i128_into_array, sha1_from_bytes};
+use ::crypto::hash::sha1_from_bytes;
+use ::error::{self, ErrorKind};
+use ::utils::{i128_from_parts, little_endian_i128_into_array};
 
 use super::AUTH_KEY_SIZE;
 use super::utils::{Padding, sha1_and_or_pad, set_slice_parts};
