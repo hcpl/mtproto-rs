@@ -38,6 +38,7 @@ mod manual_types;
 #[macro_use]
 mod utils;
 
+pub mod bigint;
 pub mod crypto;
 pub mod error;
 pub mod network;

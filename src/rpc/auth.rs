@@ -1,10 +1,10 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
 use futures::{self, Future, Poll};
-use openssl::bn;
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
+use ::bigint::calc_g_pows_bytes;
 use ::crypto;
 use ::crypto::hash::sha1_from_bytes;
 use ::error::{self, ErrorKind};
@@ -249,22 +249,17 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 check_nonce(nonce, server_dh_inner.nonce)?;
                 check_server_nonce(server_nonce, server_dh_inner.server_nonce)?;
 
-                // TODO: check that `dh_prime` is actually prime
-                // TODO: check that `g` is a quadratic residue modulo `p`
-
-                let g = bn::BigNum::from_u32(server_dh_inner.g as u32)?;
-                let mut b = bn::BigNum::new()?;
-                b.rand(2048, bn::MsbOption::ONE, true)?;
-                let dh_prime = bn::BigNum::from_slice(&server_dh_inner.dh_prime)?;
-                let mut g_b = bn::BigNum::new()?;
-                let mut ctx = bn::BigNumContext::new()?;
-                g_b.mod_exp(&g, &b, &dh_prime, &mut ctx)?;
+                let (g_b, g_ab) = calc_g_pows_bytes(
+                    server_dh_inner.g as u32,
+                    &server_dh_inner.g_a,
+                    &server_dh_inner.dh_prime,
+                )?;
 
                 let client_dh_inner = Boxed::new(schema::Client_DH_Inner_Data {
                     nonce,
                     server_nonce,
                     retry_id: 0,  // TODO: actual retry ID
-                    g_b: g_b.to_vec().into(),
+                    g_b: g_b.into(),
                 });
 
                 let client_dh_inner_len = client_dh_inner.size_hint()?;
@@ -294,10 +289,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                     encrypted_data,
                 };
 
-                let g_a = bn::BigNum::from_slice(&server_dh_inner.g_a)?;
-                let mut g_ab = bn::BigNum::new()?;
-                g_ab.mod_exp(&g_a, &b, &dh_prime, &mut ctx)?;
-                let auth_key_bytes = g_ab.to_vec();
+                let auth_key_bytes = g_ab;
 
                 // Hopefully server will use 64-bit integers before Year 2038
                 // Problem kicks in
