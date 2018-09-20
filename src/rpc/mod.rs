@@ -16,7 +16,6 @@ use tl::dynamic::TLObject;
 
 
 pub mod auth;
-pub mod encryption;
 
 
 pub trait RpcFunction: ErasedSerialize {

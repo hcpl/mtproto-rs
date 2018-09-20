@@ -5,13 +5,18 @@ use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
 use ::bigint::calc_g_pows_bytes;
-use ::crypto;
-use ::crypto::hash::sha1_from_bytes;
+use ::crypto::{
+    self,
+    factor,
+    hash::sha1_from_bytes,
+    rsa::{self, RsaPublicKey},
+};
 use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
-use ::network::connection::Connection;
-use ::network::state::{MessagePurpose, State};
-use ::rpc::encryption::asymm;
+use ::network::{
+    connection::Connection,
+    state::{MessagePurpose, State},
+};
 use ::schema;
 use ::utils::{
     little_endian_i128_from_array,
@@ -102,7 +107,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
 
         let pq_u64 = BigEndian::read_u64(&res_pq.pq);
         debug!("Decomposing pq = {}...", pq_u64);
-        let (p_u32, q_u32) = asymm::decompose_pq(pq_u64)?;
+        let (p_u32, q_u32) = factor::decompose_pq(pq_u64)?;
         debug!("Decomposed p = {}, q = {}", p_u32, q_u32);
         let u32_to_vec = |num| {
             let mut v = vec![0; 4];
@@ -125,21 +130,20 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
 
         let p_q_inner_data_serialized = serde_mtproto::to_bytes(&p_q_inner_data)?;
         debug!("Data bytes to send: {:?}", &p_q_inner_data_serialized);
-        let known_sha1_fingerprints = asymm::KNOWN_RAW_KEYS.iter()
+        let known_sha1_fingerprints = rsa::KNOWN_RAW_KEYS.iter()
             .map(|raw_key| {
-                let sha1_fingerprint = raw_key.read()?.sha1_fingerprint()?;
+                let sha1_fingerprint = RsaPublicKey::new(raw_key)?.sha1_fingerprint()?;
                 Ok(sha1_fingerprint.iter().map(|b| format!("{:02x}", b)).collect::<String>())
             })
             .collect::<error::Result<Vec<_>>>()?;
         debug!("Known public key SHA1 fingerprints: {:?}", known_sha1_fingerprints);
-        let known_fingerprints = asymm::KNOWN_RAW_KEYS.iter()
-            .map(|raw_key| Ok(raw_key.read()?.fingerprint()?))
+        let known_fingerprints = rsa::KNOWN_RAW_KEYS.iter()
+            .map(|raw_key| Ok(RsaPublicKey::new(raw_key)?.fingerprint()?))
             .collect::<error::Result<Vec<_>>>()?;
         debug!("Known public key fingerprints: {:?}", known_fingerprints);
         let server_pk_fingerprints = res_pq.server_public_key_fingerprints.inner().as_slice();
         debug!("Server public key fingerprints: {:?}", &server_pk_fingerprints);
-        let (rsa_public_key, fingerprint) =
-            asymm::find_first_key_fail_safe(server_pk_fingerprints)?;
+        let (rsa_public_key, fingerprint) = rsa::find_first_key(server_pk_fingerprints)?;
         debug!("RSA public key used: {:#?}", &rsa_public_key);
         let encrypted_data = rsa_public_key.encrypt(&p_q_inner_data_serialized)?;
         debug!("Encrypted data: {:?}", encrypted_data.as_ref());
