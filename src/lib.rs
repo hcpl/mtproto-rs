@@ -4,6 +4,8 @@
 #[macro_use]
 extern crate arrayref;
 extern crate byteorder;
+#[macro_use]
+extern crate cfg_if;
 extern crate chrono;
 extern crate crc;
 extern crate envy;
@@ -32,6 +34,15 @@ extern crate serde_mtproto_derive;
 extern crate tokio_io;
 extern crate tokio_tcp;
 extern crate toml;
+
+cfg_if! {
+    if #[cfg(feature = "non-openssl-impls")] {
+        extern crate digest;
+        extern crate num_bigint;
+        extern crate sha1;
+        extern crate sha2;
+    }
+}
 
 
 mod manual_types;

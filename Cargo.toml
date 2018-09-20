@@ -11,11 +11,14 @@ repository = "https://github.com/Connicpu/mtproto-rs"
 keywords = ["async", "mtproto", "protocol", "telegram"]
 categories = ["api-bindings"]
 
+
 [dependencies]
 arrayref = "0.3"
 byteorder = "1.1"
+cfg-if = "0.1"
 chrono = "0.4"
 crc = "1.5"
+digest = { version = "0.7", optional = true }
 envy = "0.3"
 erased-serde = "0.3"
 error-chain = "0.12"
@@ -25,6 +28,7 @@ http = "0.1"
 hyper = "0.12"
 lazy_static = "1.0"
 log = "0.4"
+num-bigint = { version = "0.2", features = ["rand"], optional = true }
 num-traits = "0.2"
 openssl = "0.10"
 rand = { version = "0.5", features = ["i128_support"] }
@@ -34,6 +38,8 @@ serde_bytes = "0.10"
 serde_derive = "1.0"
 serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "c0b6f92" }
 serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "c0b6f92" }
+sha-1 = { version = "0.7", optional = true }
+sha2 = { version = "0.7", optional = true }
 tokio-io = "0.1"
 tokio-tcp = "0.1"
 toml = "0.4"
@@ -49,6 +55,12 @@ dotenv = "0.13"
 env_logger = "0.5"
 pretty_assertions = "0.5"
 tokio = "0.1"
+
+
+[features]
+default = []
+non-openssl-impls = ["digest", "num-bigint", "sha-1", "sha2"]
+
 
 [profile.dev]
 codegen-units = 16
