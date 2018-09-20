@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "165"]
+#![recursion_limit = "175"]
 
 #[macro_use]
 extern crate arrayref;
@@ -37,7 +37,10 @@ extern crate toml;
 
 cfg_if! {
     if #[cfg(feature = "non-openssl-impls")] {
+        extern crate base64;
+        extern crate der_parser;
         extern crate digest;
+        extern crate nom;
         extern crate num_bigint;
         extern crate sha1;
         extern crate sha2;

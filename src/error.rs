@@ -6,10 +6,12 @@ error_chain! {
     }
 
     foreign_links {
+        Base64Decode(::base64::DecodeError) #[cfg(feature = "non-openssl-impls")];
         Envy(::envy::Error);
         FromUtf8(::std::string::FromUtf8Error);
         Http(::http::Error);
         Hyper(::hyper::Error);
+        Nom(::nom::Err<Vec<u8>>) #[cfg(feature = "non-openssl-impls")];
         Io(::std::io::Error);
         OpenSsl(::openssl::error::ErrorStack);
         TomlDeserialize(::toml::de::Error);
@@ -42,6 +44,11 @@ error_chain! {
         Sha1Total255Longer {
             description("The input string is already longer than 255 bytes")
             display("The input string is already longer than 255 bytes")
+        }
+
+        RsaPublicKeyInvalid(raw_key: String) {
+            description("RSA public key is invalid")
+            display("RSA public key is invalid: {:?}", raw_key)
         }
 
         NoRsaPublicKeyForFingerprints(fingerprints: Vec<i64>) {
