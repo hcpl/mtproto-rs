@@ -37,6 +37,7 @@ extern crate toml;
 
 cfg_if! {
     if #[cfg(feature = "non-openssl-impls")] {
+        extern crate aes;
         extern crate base64;
         extern crate der_parser;
         extern crate digest;

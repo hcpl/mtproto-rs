@@ -13,6 +13,7 @@ categories = ["api-bindings"]
 
 
 [dependencies]
+aes = { version = "0.2", optional = true }
 arrayref = "0.3"
 base64 = { version = "0.9", optional = true }
 byteorder = "1.1"
@@ -62,7 +63,7 @@ tokio = "0.1"
 
 [features]
 default = []
-non-openssl-impls = ["base64", "der-parser", "digest", "nom", "num-bigint", "sha-1", "sha2"]
+non-openssl-impls = ["aes", "base64", "der-parser", "digest", "nom", "num-bigint", "sha-1", "sha2"]
 
 
 [profile.dev]

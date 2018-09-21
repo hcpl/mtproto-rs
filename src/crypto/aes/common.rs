@@ -1,5 +1,3 @@
-use openssl::{aes, symm};
-
 use ::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
 use ::error;
 use ::utils::little_endian_i128_into_array;
@@ -11,74 +9,33 @@ pub(crate) struct AesParams {
     pub(crate) iv: [u8; 32],
 }
 
-
-pub(crate) fn aes_ige_encrypt(aes_params: &AesParams, data_serialized: &[u8]) -> Vec<u8> {
-    assert!(data_serialized.len() % 16 == 0);
-
-    let mut encrypted_data = vec![0; data_serialized.len()];
-    let aes_key = aes::AesKey::new_encrypt(&aes_params.key).unwrap();  // Key is 256-bit => can unwrap
-
-    // Must not panic because:
-    // - data_serialized.len() == encrypted_data.len() by declaration of encrypted_data
-    // - data_serialized.len() % 16 == 0
-    // - aes_params.iv.len() == 32 >= 32
-    aes::aes_ige(
-        data_serialized,
-        &mut encrypted_data,
-        &aes_key,
-        &mut aes_params.iv.clone(),
-        symm::Mode::Encrypt,
-    );
-
-    encrypted_data
-}
-
-pub(crate) fn aes_ige_decrypt(aes_params: &AesParams, encrypted_data: &[u8]) -> Vec<u8> {
-    assert!(encrypted_data.len() % 16 == 0);
-
-    let mut data_serialized = vec![0; encrypted_data.len()];
-    let aes_key = aes::AesKey::new_decrypt(&aes_params.key).unwrap();  // Key is 256-bit => can unwrap
-
-    // Must not panic because:
-    // - encrypted_data.len() == data_serialized.len() by declaration of data_serialized
-    // - encrypted_data.len() % 16 == 0
-    // - aes_params.iv.len() == 32 >= 32
-    aes::aes_ige(
-        encrypted_data,
-        &mut data_serialized,
-        &aes_key,
-        &mut aes_params.iv.clone(),
-        symm::Mode::Decrypt,
-    );
-
-    data_serialized
-}
+enum Mode { Encrypt, Decrypt }
 
 
 pub(crate) fn calc_aes_params_encrypt_v1(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
 ) -> error::Result<AesParams> {
-    calc_aes_params_v1(auth_key_raw, msg_key, symm::Mode::Encrypt)
+    calc_aes_params_v1(auth_key_raw, msg_key, Mode::Encrypt)
 }
 
 pub(crate) fn calc_aes_params_decrypt_v1(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
 ) -> error::Result<AesParams> {
-    calc_aes_params_v1(auth_key_raw, msg_key, symm::Mode::Decrypt)
+    calc_aes_params_v1(auth_key_raw, msg_key, Mode::Decrypt)
 }
 
 fn calc_aes_params_v1(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
-    mode: symm::Mode,
+    mode: Mode,
 ) -> error::Result<AesParams> {
     let msg_key_bytes = little_endian_i128_into_array(msg_key);
 
     let mut pos = match mode {
-        symm::Mode::Encrypt => 0,
-        symm::Mode::Decrypt => 8,
+        Mode::Encrypt => 0,
+        Mode::Decrypt => 8,
     };
 
     let mut auth_key_take = |len| {
@@ -103,26 +60,26 @@ pub(crate) fn calc_aes_params_encrypt_v2(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
 ) -> error::Result<AesParams> {
-    calc_aes_params_v2(auth_key_raw, msg_key, symm::Mode::Encrypt)
+    calc_aes_params_v2(auth_key_raw, msg_key, Mode::Encrypt)
 }
 
 pub(crate) fn calc_aes_params_decrypt_v2(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
 ) -> error::Result<AesParams> {
-    calc_aes_params_v2(auth_key_raw, msg_key, symm::Mode::Decrypt)
+    calc_aes_params_v2(auth_key_raw, msg_key, Mode::Decrypt)
 }
 
 fn calc_aes_params_v2(
     auth_key_raw: &[u8; 256],
     msg_key: i128,
-    mode: symm::Mode,
+    mode: Mode,
 ) -> error::Result<AesParams> {
     let msg_key_bytes = little_endian_i128_into_array(msg_key);
 
     let mut pos = match mode {
-        symm::Mode::Encrypt => 0,
-        symm::Mode::Decrypt => 8,
+        Mode::Encrypt => 0,
+        Mode::Decrypt => 8,
     };
 
     let mut auth_key_take = |len| {

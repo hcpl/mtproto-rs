@@ -6,7 +6,7 @@ implementation in Rust.
 Intended to provide low-level features to create a robust foundation for
 higher-level libraries such as `telegram-rs`.
 
-Supports Rust 1.26 and newer.
+Supports Rust 1.27 and newer.
 Older versions may work, but are not guaranteed to.
 
 
