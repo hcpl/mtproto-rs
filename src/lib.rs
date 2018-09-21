@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "175"]
+#![recursion_limit = "176"]
 
 #[macro_use]
 extern crate arrayref;
@@ -21,7 +21,6 @@ extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate num_traits;
-extern crate openssl;
 extern crate rand;
 extern crate select;
 extern crate serde;
@@ -45,6 +44,21 @@ cfg_if! {
         extern crate num_bigint;
         extern crate sha1;
         extern crate sha2;
+    }
+}
+
+cfg_if! {
+    if #[cfg(feature = "openssl")] {
+        extern crate openssl;
+    }
+}
+
+cfg_if! {
+    if #[cfg(not(any(feature = "non-openssl-impls", feature = "openssl")))] {
+        compile_error!("\
+            At least one of the features \"non-openssl-impls\" or \"openssl\" \
+            must be enabled for this crate.\
+        ");
     }
 }
 

@@ -147,8 +147,6 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
         debug!("RSA public key used: {:#?}", &rsa_public_key);
         let encrypted_data = rsa_public_key.encrypt(&p_q_inner_data_serialized)?;
         debug!("Encrypted data: {:?}", encrypted_data.as_ref());
-        //let encrypted_data2 = rsa_public_key.encrypt2(&p_q_inner_data_serialized)?;
-        //debug!("Encrypted data 2: {:?}", &encrypted_data2);
 
         let req_dh_params = schema::rpc::req_DH_params {
             nonce,
@@ -157,7 +155,6 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
             q: q.into(),
             public_key_fingerprint: fingerprint,
             encrypted_data: encrypted_data.to_vec().into(),
-            //encrypted_data: encrypted_data2.into(),
         };
 
         Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
