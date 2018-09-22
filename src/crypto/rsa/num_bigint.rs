@@ -59,11 +59,9 @@ impl RsaPublicKey {
 
         let bn_padded_input = BigUint::from_bytes_be(&padded_input);
         let pre_output = BigUint::modpow(&bn_padded_input, &self.e, &self.n).to_bytes_be();
-        assert!(pre_output.len() == 256);
 
-        let output = array_int! {
-            256 => &pre_output[..],
-        };
+        let mut output = [0; 256];
+        output[(256 - pre_output.len())..].copy_from_slice(&pre_output);
 
         Ok(output)
     }
