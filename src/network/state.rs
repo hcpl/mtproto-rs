@@ -3,6 +3,7 @@ use rand;
 
 use ::error;
 use ::protocol::ProtocolVersion;
+use ::rpc::auth::AuthKey;
 use ::tl::message::MessageCommon;
 
 
@@ -13,10 +14,11 @@ pub enum MessagePurpose {
 }
 
 
+#[derive(Clone, Debug)]
 pub struct State {
     id: i64,
-    pub(crate) auth_raw_key: [u8; 256],
-    time_offset: i32,
+    pub(crate) auth_key: Option<AuthKey>,
+    pub(crate) time_offset: i32,
     salt: i64,
     seq_no: u32,
     last_msg_id: i64,
@@ -27,7 +29,7 @@ impl State {
     pub fn new(version: ProtocolVersion) -> State {
         State {
             id: rand::random(),
-            auth_raw_key: [0; 256],
+            auth_key: None,
             time_offset: 0,
             salt: 0,
             seq_no: 0,
@@ -85,5 +87,9 @@ impl State {
                 self.seq_no * 2
             },
         }
+    }
+
+    pub(crate) fn auth_raw_key(&self) -> Option<&[u8; 256]> {
+        self.auth_key.as_ref().map(|auth_key| &auth_key.raw)
     }
 }

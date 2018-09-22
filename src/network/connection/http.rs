@@ -85,10 +85,6 @@ impl ConnectionHttp {
 impl Connection for ConnectionHttp {
     type Addr = hyper::Uri;
 
-    fn new(addr: hyper::Uri) -> Box<Future<Item = Self, Error = error::Error> + Send> {
-        Box::new(futures::future::ok(Self::new(addr)))
-    }
-
     fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
@@ -112,7 +108,7 @@ fn create_http_request<T, M>(state: &State, request_message: M, server_addr: &hy
     where T: fmt::Debug + Serialize + TLObject,
           M: MessageCommon<T>,
 {
-    let raw_message = request_message.to_raw(&state.auth_raw_key, state.version)?;
+    let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
     let serialized_message = serde_mtproto::to_bytes(&raw_message)?;
 
     // Here we do mean to unwrap since it should fail if something goes wrong anyway
@@ -161,7 +157,7 @@ fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N
         ($vnames:expr) => {{
             serde_mtproto::from_bytes_seed(N::RawSeed::new(encrypted_data_len), response_bytes, $vnames)
                 .map_err(Into::into)
-                .and_then(|raw| N::from_raw(raw, &state.auth_raw_key, state.version, $vnames))
+                .and_then(|raw| N::from_raw(raw, state.auth_raw_key(), state.version, $vnames))
         }};
     }
 

@@ -3,13 +3,13 @@ use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
-use futures::{self, Future, IntoFuture};
+use futures::{self, Future, IntoFuture, Poll};
 use log;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_io;
-use tokio_tcp::TcpStream;
+use tokio_tcp::{self, TcpStream};
 
 use ::error::{self, ErrorKind};
 use ::network::connection::common::Connection;
@@ -28,22 +28,16 @@ pub struct ConnectionTcpFull {
 }
 
 impl ConnectionTcpFull {
-    pub fn new(server_addr: SocketAddr)
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
-    {
+    pub fn connect(server_addr: SocketAddr) -> ConnectFuture {
         if log_enabled!(log::Level::Info) {
             info!("New TCP connection in full mode to {}", server_addr);
         }
 
-        Box::new(TcpStream::connect(&server_addr).map(move |socket| {
-            Self { socket, server_addr, sent_counter: 0 }
-        }).map_err(Into::into))
+        ConnectFuture { socket_fut: TcpStream::connect(&server_addr), server_addr }
     }
 
-    pub fn with_default_server()
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
-    {
-        Self::new(TCP_SERVER_ADDRS[0])
+    pub fn with_default_server() -> ConnectFuture {
+        Self::connect(TCP_SERVER_ADDRS[0])
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
@@ -88,12 +82,28 @@ impl ConnectionTcpFull {
     }
 }
 
+pub struct ConnectFuture {
+    socket_fut: tokio_tcp::ConnectFuture,
+    server_addr: SocketAddr,
+}
+
+impl Future for ConnectFuture {
+    type Item = ConnectionTcpFull;
+    type Error = error::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let socket = self.socket_fut.poll()?;
+
+        Ok(socket.map(|socket| ConnectionTcpFull {
+            socket,
+            server_addr: self.server_addr,
+            sent_counter: 0,
+        }))
+    }
+}
+
 impl Connection for ConnectionTcpFull {
     type Addr = SocketAddr;
-
-    fn new(addr: SocketAddr) -> Box<Future<Item = Self, Error = error::Error> + Send> {
-        Self::new(addr)
-    }
 
     fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
@@ -118,7 +128,7 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_coun
     where T: fmt::Debug + Serialize + TLObject,
           M: MessageCommon<T>,
 {
-    let raw_message = tryf!(message.to_raw(&state.auth_raw_key, state.version));
+    let raw_message = tryf!(message.to_raw(state.auth_raw_key(), state.version));
 
     let size = tryf!(raw_message.size_hint()) + 12;  // FIXME: May overflow on 32-bit systems
     let data = if size <= 0xff_ff_ff_ff {
@@ -142,18 +152,13 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_coun
 
     let response = request.and_then(|(socket, _request_bytes)| {
         tokio_io::io::read_exact(socket, [0; 8])
-    }).then(|result|
-        -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
-    {
-        let (socket, first_bytes) = tryf!(result);
-
+    }).map_err(Into::into).and_then(|(socket, first_bytes)| {
         let len = LittleEndian::read_u32(&first_bytes[0..4]);
         let ulen = len as usize;  // FIXME: use safe cast here
         // TODO: check seq_no
         let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-        let process_last_bytes_future = tokio_io::io::read_exact(socket, vec![0; ulen - 8])
-            .map_err(Into::into)
+        tokio_io::io::read_exact(socket, vec![0; ulen - 8]).map_err(Into::into)
             .and_then(move |(socket, last_bytes)|
         {
             let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
@@ -173,9 +178,7 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_coun
             };
 
             result_future
-        });
-
-        Box::new(process_last_bytes_future)
+        })
     });
 
     Box::new(response)

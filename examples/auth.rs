@@ -41,9 +41,9 @@ fn processed_auth<C, F>(conn_fut: F, tag: &'static str)
         mtproto::rpc::auth::auth_with_state(conn, state)
     }).then(move |res| {
         match res {
-            Ok(AuthValues { auth_key, time_offset }) => {
-                println!("Success ({}): auth key = {:?}, time offset = {}",
-                    tag, auth_key, time_offset);
+            Ok(AuthValues { conn: _conn, state }) => {
+                println!("Success ({}): state = {:?}",
+                    tag, state);
             },
             Err(e) => {
                 println!("{} ({})", e, tag);

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
 use futures::{self, Future, Poll};
@@ -26,24 +28,43 @@ use ::utils::{
 };
 
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct AuthKey {
+    pub(crate) raw: [u8; 256],
     aux_hash: i64,
     fingerprint: i64,
 }
 
-
-pub struct AuthValues {
-    pub auth_key: AuthKey,
-    pub time_offset: i32,
+impl fmt::Debug for AuthKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("AuthKey")
+            .field("raw", &&self.raw[..])
+            .field("aux_hash", &self.aux_hash)
+            .field("fingerprint", &self.fingerprint)
+            .finish()
+    }
 }
 
-pub struct AuthFuture {
-    fut: Box<Future<Item = AuthValues, Error = error::Error> + Send>,
+impl PartialEq for AuthKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw[..] == other.raw[..]
+            && self.aux_hash == other.aux_hash
+            && self.fingerprint == other.fingerprint
+    }
 }
 
-impl Future for AuthFuture {
-    type Item = AuthValues;
+
+pub struct AuthValues<C> {
+    pub conn: C,
+    pub state: State,
+}
+
+pub struct AuthFuture<C> {
+    fut: Box<Future<Item = AuthValues<C>, Error = error::Error> + Send>,
+}
+
+impl<C: Connection> Future for AuthFuture<C> {
+    type Item = AuthValues<C>;
     type Error = error::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -53,7 +74,7 @@ impl Future for AuthFuture {
 
 
 /// Combine all authorization steps defined below.
-pub fn auth_with_state<C: Connection>(conn: C, state: State) -> AuthFuture {
+pub fn auth_with_state<C: Connection>(conn: C, state: State) -> AuthFuture<C> {
     let fut = futures::future::ok(Step1Input { conn, state })
         .and_then(auth_step1)
         .and_then(auth_step2)
@@ -65,7 +86,7 @@ pub fn auth_with_state<C: Connection>(conn: C, state: State) -> AuthFuture {
     }
 }
 
-struct Step1Input<C: Connection> {
+struct Step1Input<C> {
     conn: C,
     state: State,
 }
@@ -85,7 +106,7 @@ fn auth_step1<C: Connection>(input: Step1Input<C>)
     }))
 }
 
-struct Step2Input<C: Connection> {
+struct Step2Input<C> {
     conn: C,
     state: State,
     res_pq: schema::ResPQ,
@@ -177,7 +198,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
     }))
 }
 
-struct Step3Input<C: Connection> {
+struct Step3Input<C> {
     conn: C,
     state: State,
     server_dh_params: schema::Server_DH_Params,
@@ -188,7 +209,7 @@ struct Step3Input<C: Connection> {
 
 /// Step 3: DH key exchange complete
 fn auth_step3<C: Connection>(input: Step3Input<C>)
-    -> Box<Future<Item = Step4Input, Error = error::Error> + Send>
+    -> Box<Future<Item = Step4Input<C>, Error = error::Error> + Send>
 {
     fn prepare_step3<C: Connection>(input: Step3Input<C>)
         -> error::Result<(C, State, schema::rpc::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
@@ -291,6 +312,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 };
 
                 let auth_key_bytes = g_ab;
+                assert_eq!(auth_key_bytes.len(), 256);
 
                 // Hopefully server will use 64-bit integers before Year 2038
                 // Problem kicks in
@@ -307,8 +329,10 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
 
     let request = conn.request_plain(state, set_client_dh_params, MessagePurpose::Content);
 
-    Box::new(request.map(move |(_conn, _state, set_client_dh_params_answer)| {
+    Box::new(request.map(move |(conn, state, set_client_dh_params_answer)| {
         Step4Input {
+            conn,
+            state,
             set_client_dh_params_answer,
             nonce,
             server_nonce,
@@ -319,7 +343,9 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
     }))
 }
 
-struct Step4Input {
+struct Step4Input<C> {
+    conn: C,
+    state: State,
     set_client_dh_params_answer: schema::Set_client_DH_params_answer,
     nonce: i128,
     server_nonce: i128,
@@ -328,10 +354,12 @@ struct Step4Input {
     time_offset: i32,
 }
 
-fn auth_step4(input: Step4Input)
-    -> error::Result<AuthValues>
+fn auth_step4<C: Connection>(input: Step4Input<C>)
+    -> error::Result<AuthValues<C>>
 {
     let Step4Input {
+        conn,
+        mut state,
         set_client_dh_params_answer,
         nonce,
         server_nonce,
@@ -344,6 +372,7 @@ fn auth_step4(input: Step4Input)
 
     let auth_key_sha1 = sha1_from_bytes(&[&auth_key_bytes])?;
     let auth_key = AuthKey {
+        raw: array_int! { 256 => &auth_key_bytes },
         aux_hash: LittleEndian::read_i64(&auth_key_sha1[0..8]),
         fingerprint: LittleEndian::read_i64(&auth_key_sha1[8..16]),
     };
@@ -356,7 +385,10 @@ fn auth_step4(input: Step4Input)
             check_server_nonce(server_nonce, dh_gen_ok.server_nonce)?;
             check_new_nonce_derived_hash(new_nonce, 1, auth_key.aux_hash, dh_gen_ok.new_nonce_hash1)?;
 
-            Ok(AuthValues { auth_key, time_offset })
+            state.auth_key = Some(auth_key);
+            state.time_offset = time_offset;
+
+            Ok(AuthValues { conn, state })
         },
         schema::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
             info!("DH params verification needs a retry: {:?}", dh_gen_retry);

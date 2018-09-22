@@ -32,7 +32,7 @@ pub(crate) fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> erro
         ($vnames:expr) => {{
             serde_mtproto::from_bytes_seed(N::RawSeed::new(encrypted_data_len), response_bytes, $vnames)
                 .map_err(Into::into)
-                .and_then(|raw| N::from_raw(raw, &state.auth_raw_key, state.version, $vnames))
+                .and_then(|raw| N::from_raw(raw, state.auth_raw_key(), state.version, $vnames))
         }};
     }
 

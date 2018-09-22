@@ -3,13 +3,13 @@ use std::io;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
-use futures::{self, Future, IntoFuture};
+use futures::{self, Future, IntoFuture, Poll};
 use log;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_io;
-use tokio_tcp::TcpStream;
+use tokio_tcp::{self, TcpStream};
 
 use ::error::{self, ErrorKind};
 use ::network::connection::common::Connection;
@@ -28,22 +28,16 @@ pub struct ConnectionTcpIntermediate {
 }
 
 impl ConnectionTcpIntermediate {
-    pub fn new(server_addr: SocketAddr)
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
-    {
+    pub fn connect(server_addr: SocketAddr) -> ConnectFuture {
         if log_enabled!(log::Level::Info) {
             info!("New TCP connection in intermediate mode to {}", server_addr);
         }
 
-        Box::new(TcpStream::connect(&server_addr).map(move |socket| {
-            Self { socket, server_addr, is_first_request: true }
-        }).map_err(Into::into))
+        ConnectFuture { socket_fut: TcpStream::connect(&server_addr), server_addr }
     }
 
-    pub fn with_default_server()
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
-    {
-        Self::new(TCP_SERVER_ADDRS[0])
+    pub fn with_default_server() -> ConnectFuture {
+        Self::connect(TCP_SERVER_ADDRS[0])
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
@@ -88,12 +82,28 @@ impl ConnectionTcpIntermediate {
     }
 }
 
+pub struct ConnectFuture {
+    socket_fut: tokio_tcp::ConnectFuture,
+    server_addr: SocketAddr,
+}
+
+impl Future for ConnectFuture {
+    type Item = ConnectionTcpIntermediate;
+    type Error = error::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let socket = self.socket_fut.poll()?;
+
+        Ok(socket.map(|socket| ConnectionTcpIntermediate {
+            socket,
+            server_addr: self.server_addr,
+            is_first_request: true,
+        }))
+    }
+}
+
 impl Connection for ConnectionTcpIntermediate {
     type Addr = SocketAddr;
-
-    fn new(addr: SocketAddr) -> Box<Future<Item = Self, Error = error::Error> + Send> {
-        Self::new(addr)
-    }
 
     fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
@@ -118,7 +128,7 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, is_first_
     where T: fmt::Debug + Serialize + TLObject,
           M: MessageCommon<T>,
 {
-    let raw_message = tryf!(message.to_raw(&state.auth_raw_key, state.version));
+    let raw_message = tryf!(message.to_raw(state.auth_raw_key(), state.version));
 
     let size = tryf!(raw_message.size_hint());
     let data = if size <= 0xff_ff_ff_ff {
@@ -132,11 +142,11 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, is_first_
         bailf!(ErrorKind::MessageTooLong(size));
     };
 
-    let init: Box<Future<Item = (TcpStream, &'static [u8]), Error = io::Error> + Send> = if *is_first_request {
+    let init = if *is_first_request {
         *is_first_request = false;
-        Box::new(tokio_io::io::write_all(socket, b"\xee\xee\xee\xee".as_ref()))
+        Step1Future::FirstRequest(tokio_io::io::write_all(socket, b"\xee\xee\xee\xee".as_ref()))
     } else {
-        Box::new(futures::future::ok((socket, [].as_ref())))
+        Step1Future::NonFirstRequest(futures::future::ok((socket, [].as_ref())))
     };
 
     let request = init.and_then(|(socket, _init_bytes)| {
@@ -151,4 +161,22 @@ fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, is_first_
     });
 
     Box::new(response.map_err(Into::into))
+}
+
+
+enum Step1Future {
+    FirstRequest(tokio_io::io::WriteAll<TcpStream, &'static [u8]>),
+    NonFirstRequest(futures::future::FutureResult<(TcpStream, &'static [u8]), io::Error>),
+}
+
+impl Future for Step1Future {
+    type Item = (TcpStream, &'static [u8]);
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match *self {
+            Step1Future::FirstRequest(ref mut fut) => fut.poll(),
+            Step1Future::NonFirstRequest(ref mut fut) => fut.poll(),
+        }
+    }
 }
