@@ -42,8 +42,8 @@ rpc_error#2144ca19 error_code:int error_message:string = RpcError;
 future_salt#0949d9dc valid_since:int valid_until:int salt:long = FutureSalt;
 future_salts#ae500895 req_msg_id:long now:int salts:vector<future_salt> = FutureSalts;
 
-message msg_id:long seqno:int body:WithSize<Object> = manual.Message; // parsed manually
-msg_container#73f1f8dc messages:vector<message> = manual.MessageContainer; // parsed manually
+//message msg_id:long seqno:int body:WithSize<Object> = manual.Message; // parsed manually
+//msg_container#73f1f8dc messages:vector<message> = manual.MessageContainer; // parsed manually
 
 // Just add a constructor so that P_Q_inner_data was an enum like in non-minimized schema
 p_q_inner_data_temp#3c6a84d4 pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 expires_in:int = P_Q_inner_data;

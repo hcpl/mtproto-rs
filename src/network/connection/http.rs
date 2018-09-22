@@ -12,7 +12,7 @@ use serde_mtproto::{self, MtProtoSized};
 use ::error::{self, ErrorKind};
 use ::network::connection::common::Connection;
 use ::network::connection::server::HTTP_SERVER_ADDRS;
-use ::network::state::{MessagePurpose, State};
+use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageSeedCommon};
 
@@ -32,30 +32,30 @@ impl ConnectionHttp {
         Self::new(HTTP_SERVER_ADDRS[0].clone())
     }
 
-    pub fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+    pub fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data, purpose)
+        self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data)
     }
 
-    pub fn request<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+    pub fn request<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data, purpose)
+        self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data)
     }
 
-    fn impl_request<T, U, M, N>(self, mut state: State, request_data: T, purpose: MessagePurpose)
+    fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
               N: MessageCommon<U> + 'static,
     {
-        let request_message = tryf!(state.create_message::<T, M>(request_data, purpose));
+        let request_message = tryf!(state.create_message::<T, M>(request_data));
         debug!("Message to send: {:#?}", request_message);
 
         let http_request = tryf!(create_http_request(&state, request_message, &self.server_addr));
@@ -83,22 +83,20 @@ impl ConnectionHttp {
 }
 
 impl Connection for ConnectionHttp {
-    type Addr = hyper::Uri;
-
-    fn request_plain<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+    fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request_plain(state, request_data, purpose)
+        self.request_plain(state, request_data)
     }
 
-    fn request<T, U>(self, state: State, request_data: T, purpose: MessagePurpose)
+    fn request<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request(state, request_data, purpose)
+        self.request(state, request_data)
     }
 }
 

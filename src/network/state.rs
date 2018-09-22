@@ -4,14 +4,8 @@ use rand;
 use ::error;
 use ::protocol::ProtocolVersion;
 use ::rpc::auth::AuthKey;
+use ::tl::dynamic::{ObjectType, TLObject};
 use ::tl::message::MessageCommon;
-
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MessagePurpose {
-    Content,
-    NonContent,
-}
 
 
 #[derive(Clone, Debug)]
@@ -38,11 +32,12 @@ impl State {
         }
     }
 
-    pub fn create_message<T, M>(&mut self, obj: T, purpose: MessagePurpose) -> error::Result<M>
-        where M: MessageCommon<T>
+    pub fn create_message<T, M>(&mut self, obj: T) -> error::Result<M>
+        where M: MessageCommon<T>,
+              T: TLObject,
     {
         let message_id = self.get_new_msg_id();
-        let seq_no = self.next_seq_no(purpose);
+        let seq_no = self.next_seq_no(T::object_type());
 
         M::new(self.salt, self.id, message_id, seq_no, obj)
     }
@@ -76,14 +71,14 @@ impl State {
         self.time_offset
     }
 
-    fn next_seq_no(&mut self, purpose: MessagePurpose) -> u32 {
-        match purpose {
-            MessagePurpose::Content => {
+    fn next_seq_no(&mut self, object_type: ObjectType) -> u32 {
+        match object_type {
+            ObjectType::Function => {
                 let result = self.seq_no * 2 + 1;
                 self.seq_no += 1;
                 result
             },
-            MessagePurpose::NonContent => {
+            ObjectType::Type => {
                 self.seq_no * 2
             },
         }

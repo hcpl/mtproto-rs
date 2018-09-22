@@ -32,10 +32,15 @@ impl<T: 'static + Clone + TLObject> TLObjectCloneToBox for T {
 }
 
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObjectType { Type, Function }
+
 /// For any object type of which is representable in Type Language.
 pub trait TLObject: Any + ErasedSerialize + Identifiable + MtProtoSized + TLObjectCloneToBox {
-    fn as_any(&self) -> &Any;
-    fn as_box_any(self: Box<Self>) -> Box<Any>;
+    fn object_type() -> ObjectType where Self: Sized;
+
+    fn as_any(&self) -> &Any where Self: Sized { self }
+    fn as_box_any(self: Box<Self>) -> Box<Any> where Self: Sized { self }
 }
 
 // TLObject impls
@@ -98,13 +103,6 @@ impl Identifiable for Box<TLObject> {
     fn enum_variant_id(&self) -> Option<&'static str> {
         (**self).enum_variant_id()
     }
-}
-
-// impl TLObject for types
-
-impl<T: Clone + Any + Serialize + Identifiable + MtProtoSized> TLObject for T {
-    fn as_any(&self) -> &Any { self }
-    fn as_box_any(self: Box<Self>) -> Box<Any> { self }
 }
 
 

@@ -17,7 +17,7 @@ use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
 use ::network::{
     connection::Connection,
-    state::{MessagePurpose, State},
+    state::State,
 };
 use ::schema;
 use ::utils::{
@@ -99,7 +99,7 @@ fn auth_step1<C: Connection>(input: Step1Input<C>)
     let req_pq = schema::rpc::req_pq { nonce };
 
     info!("Sending PQ request: {:#?}", req_pq);
-    let request = input.conn.request_plain(input.state, req_pq, MessagePurpose::Content);
+    let request = input.conn.request_plain(input.state, req_pq);
 
     Box::new(request.map(move |(conn, state, res_pq)| {
         Step2Input { conn, state, res_pq, nonce }
@@ -184,7 +184,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
     let (conn, state, req_dh_params, nonce, server_nonce, new_nonce) = tryf!(prepare_step2(input));
 
     info!("Sending DH key exchange request: {:?}", req_dh_params);
-    let request = conn.request_plain(state, req_dh_params, MessagePurpose::Content);
+    let request = conn.request_plain(state, req_dh_params);
 
     Box::new(request.map(move |(conn, state, server_dh_params)| {
         Step3Input {
@@ -327,7 +327,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
     let (conn, state, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset) =
         tryf!(prepare_step3(input));
 
-    let request = conn.request_plain(state, set_client_dh_params, MessagePurpose::Content);
+    let request = conn.request_plain(state, set_client_dh_params);
 
     Box::new(request.map(move |(conn, state, set_client_dh_params_answer)| {
         Step4Input {

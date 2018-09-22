@@ -215,7 +215,7 @@ impl Constructors {
 
     fn to_syn_data_type_items<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>) -> error::Result<Vec<syn::Item>> {
         if self.0.len() == 1 {
-            return self.0[0].to_syn_single_type_struct(ctors_typeck_info).map(|s| vec![s]);
+            return self.0[0].to_syn_single_type_struct(ctors_typeck_info);
         }
 
         assert!(self.0.len() >= 2); // FIXME: return errors instead of assert
@@ -245,6 +245,14 @@ impl Constructors {
             }
         }.as_str()).unwrap();
 
+        let tl_object_impl = syn::parse_item(quote! {
+            impl ::tl::TLObject for #name {
+                fn object_type() -> ::tl::dynamic::ObjectType {
+                    ::tl::dynamic::ObjectType::Type
+                }
+            }
+        }.as_str()).unwrap();
+
         let syn_data_type_items = {
             // enum & impl & structs; structs.len() == self.0.len()
             let mut v = Vec::with_capacity(1 + 1 + self.0.len());
@@ -252,6 +260,7 @@ impl Constructors {
             v.push(syn_enum);
             v.extend(methods);
             v.extend(structs);
+            v.push(tl_object_impl);
 
             v
         };

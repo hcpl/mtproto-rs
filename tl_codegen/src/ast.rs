@@ -492,18 +492,29 @@ impl Constructor {
         self.to_syn_struct(&name, ctors_typeck_info)
     }
 
-    pub fn to_syn_single_type_struct<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>) -> error::Result<syn::Item> {
+    pub fn to_syn_single_type_struct<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>) -> error::Result<Vec<syn::Item>> {
         let name = self.output.name().map(no_conflict_ident).unwrap(); // FIXME
-        self.to_syn_type_struct_base(name, ctors_typeck_info)
+
+        let syn_struct = self.to_syn_type_struct_base(name.clone(), ctors_typeck_info)?;
+        let tl_object_impl = syn::parse_item(quote! {
+            impl ::tl::TLObject for #name {
+                fn object_type() -> ::tl::dynamic::ObjectType {
+                    ::tl::dynamic::ObjectType::Type
+                }
+            }
+        }.as_str()).unwrap();
+
+        Ok(vec![syn_struct, tl_object_impl])
     }
 
     pub fn to_syn_function_struct<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>) -> error::Result<Vec<syn::Item>> {
         let name = self.variant_name();
         let syn_rpc_generics = self.syn_rpc_generics();
         let syn_generics = self.syn_generics();
-        let generic_types = syn_generics.ty_params
+        let generic_types1 = syn_generics.ty_params
             .into_iter()
             .map(|ty_param| syn::Ty::Path(None, ty_param.ident.into()));
+        let generic_types2 = generic_types1.clone();
 
         let struct_block = self.to_syn_struct(&name, ctors_typeck_info)?;
         let mut output_ty = self.output.to_type_ir()?.unboxed();
@@ -518,13 +529,20 @@ impl Constructor {
         }
 
         let name = syn::Ident::new(name);
-        let impl_item = syn::parse_item(quote! {
-            impl #syn_rpc_generics ::rpc::RpcFunction for #name<#(#generic_types),*> {
+        let tl_object_impl_item = syn::parse_item(quote! {
+            impl ::tl::TLObject for #name<#(#generic_types1),*> {
+                fn object_type() -> ::tl::dynamic::ObjectType {
+                    ::tl::dynamic::ObjectType::Function
+                }
+            }
+        }.as_str()).unwrap();
+        let rpc_function_impl_item = syn::parse_item(quote! {
+            impl #syn_rpc_generics ::rpc::RpcFunction for #name<#(#generic_types2),*> {
                 type Reply = #output_ty;
             }
         }.as_str()).unwrap();
 
-        Ok(vec![struct_block, impl_item])
+        Ok(vec![struct_block, tl_object_impl_item, rpc_function_impl_item])
     }
 }
 
