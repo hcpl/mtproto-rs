@@ -101,6 +101,7 @@ pub fn generate_ast_for(input: &str) -> syn::Crate {
 
     let ctors_typeck_info = constructors.ctors_typeck_info();
 
+    let mut type_items = vec![];
     let mut dynamic_ctors: Vec<(Vec<String>, u32, syn::Stmt)> = vec![];
     for (namespaces, constructor_map) in &constructors.types {
         dynamic_ctors.extend(constructor_map.values()
@@ -109,7 +110,7 @@ pub fn generate_ast_for(input: &str) -> syn::Crate {
         let substructs = constructor_map.values()
             .flat_map(|c| c.to_syn_data_type_items(&ctors_typeck_info).unwrap()); // FIXME
 
-        process_namespaces(&mut krate_contents.items, namespaces, substructs);
+        process_namespaces(&mut type_items, namespaces, substructs);
     }
 
     dynamic_ctors.sort_by(|&(ref names1, tl_id1, ref _stmt1), &(ref names2, tl_id2, ref _stmt2)| {
@@ -123,21 +124,27 @@ pub fn generate_ast_for(input: &str) -> syn::Crate {
             #(#stmts)*
         }
     }.as_str()).unwrap();
-    krate_contents.items.push(register_ctors);
 
-    let mut rpc_items = vec![];
+    type_items.push(register_ctors);
+    krate_contents.items.push(syn::parse_item(quote! {
+        pub mod types {
+            #(#type_items)*
+        }
+    }.as_str()).unwrap());
+
+    let mut function_items = vec![];
     for (namespaces, substructs) in &constructors.functions {
         let substructs = substructs.into_iter()
             .flat_map(|c| {
                 c.to_syn_function_struct(&ctors_typeck_info).unwrap() // FIXME
             });
 
-        process_namespaces(&mut rpc_items, namespaces, substructs);
+        process_namespaces(&mut function_items, namespaces, substructs);
     }
 
     krate_contents.items.push(syn::parse_item(quote! {
-        pub mod rpc {
-            #(#rpc_items)*
+        pub mod functions {
+            #(#function_items)*
         }
     }.as_str()).unwrap());
 

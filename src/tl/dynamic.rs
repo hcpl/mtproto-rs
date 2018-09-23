@@ -8,7 +8,7 @@ use std::fmt;
 use erased_serde::{self, Serialize as ErasedSerialize, Deserializer as ErasedDeserializer};
 use serde::ser::{Serialize, Serializer};
 use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
-use serde_mtproto::{Identifiable, MtProtoSized};
+use serde_mtproto::{self, Identifiable, MtProtoSized};
 
 use error::{self, ErrorKind};
 
@@ -25,7 +25,7 @@ pub trait TLObjectCloneToBox {
     fn clone_to_box(&self) -> Box<TLObject>;
 }
 
-impl<T: 'static + Clone + TLObject> TLObjectCloneToBox for T {
+impl<T: Clone + TLObject + 'static> TLObjectCloneToBox for T {
     fn clone_to_box(&self) -> Box<TLObject> {
         Box::new(self.clone())
     }
@@ -102,6 +102,39 @@ impl Identifiable for Box<TLObject> {
 
     fn enum_variant_id(&self) -> Option<&'static str> {
         (**self).enum_variant_id()
+    }
+}
+
+// impl TLObject for external types
+
+impl TLObject for bool {
+    fn object_type() -> ObjectType {
+        ObjectType::Type
+    }
+}
+
+impl TLObject for i32 {
+    fn object_type() -> ObjectType {
+        ObjectType::Type
+    }
+}
+
+impl TLObject for i64 {
+    fn object_type() -> ObjectType {
+        ObjectType::Type
+    }
+}
+
+impl<T: Clone + Serialize + TLObject> TLObject for serde_mtproto::Boxed<T> {
+    fn object_type() -> ObjectType {
+        T::object_type()
+    }
+}
+
+
+impl<T: Clone + Serialize + TLObject> TLObject for Vec<T> {
+    fn object_type() -> ObjectType {
+        T::object_type()
     }
 }
 

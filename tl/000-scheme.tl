@@ -35,6 +35,7 @@
 resPQ#05162463 nonce:int128 server_nonce:int128 pq:string server_public_key_fingerprints:Vector<long> = ResPQ;
 
 p_q_inner_data#83c95aec pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 = P_Q_inner_data;
+p_q_inner_data_temp#3c6a84d4 pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 expires_in:int = P_Q_inner_data;
 
 server_DH_params_fail#79cb045d nonce:int128 server_nonce:int128 new_nonce_hash:int128 = Server_DH_Params;
 server_DH_params_ok#d0e8075c nonce:int128 server_nonce:int128 encrypted_answer:string = Server_DH_Params;
@@ -106,7 +107,7 @@ new_session_created#9ec20908 first_msg_id:long unique_id:long server_salt:long =
 
 http_wait#9299359f max_delay:int wait_after:int max_wait:int = HttpWait;
 
-ipPort ipv4:int port:int = IpPort;
+ipPort#d433ad73 ipv4:int port:int = IpPort;
 help.configSimple#d997c3c5 date:int expires:int dc_id:int ip_port_list:Vector<ipPort> = help.ConfigSimple;
 
 ---functions---

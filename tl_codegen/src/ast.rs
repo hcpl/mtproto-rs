@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashSet};
-use std::iter;
 
 use syn;
 use synom;
@@ -347,7 +346,7 @@ impl Constructor {
         }
     }
 
-    fn syn_rpc_generics(&self) -> syn::Generics {
+    fn syn_function_generics(&self) -> syn::Generics {
         if self.type_parameters.is_empty() {
             return syn::Generics::default();
         }
@@ -509,7 +508,7 @@ impl Constructor {
 
     pub fn to_syn_function_struct<'a>(&self, ctors_typeck_info: &BTreeMap<&'a Constructor, TypeckKind>) -> error::Result<Vec<syn::Item>> {
         let name = self.variant_name();
-        let syn_rpc_generics = self.syn_rpc_generics();
+        let syn_function_generics = self.syn_function_generics();
         let syn_generics = self.syn_generics();
         let generic_types1 = syn_generics.ty_params
             .into_iter()
@@ -528,16 +527,37 @@ impl Constructor {
             }
         }
 
+        let ty_params = self.type_parameters.iter()
+            .map(|field| syn::TyParam {
+                attrs: vec![],
+                ident: syn::Ident::new(field.name.clone().unwrap()), // FIXME
+                bounds: vec![
+                    syn::parse_ty_param_bound(quote! {
+                        ::std::clone::Clone
+                    }.as_str()).unwrap(),
+                    syn::parse_ty_param_bound(quote! {
+                        ::serde::Serialize
+                    }.as_str()).unwrap(),
+                    syn::parse_ty_param_bound(quote! {
+                        ::serde_mtproto::MtProtoSized
+                    }.as_str()).unwrap(),
+                    syn::parse_ty_param_bound(quote! {
+                        'static
+                    }.as_str()).unwrap(),
+                ],
+                default: None,
+            })
+            .collect::<Vec<_>>();
         let name = syn::Ident::new(name);
         let tl_object_impl_item = syn::parse_item(quote! {
-            impl ::tl::TLObject for #name<#(#generic_types1),*> {
+            impl<#(#ty_params),*> ::tl::TLObject for #name<#(#generic_types1),*> {
                 fn object_type() -> ::tl::dynamic::ObjectType {
                     ::tl::dynamic::ObjectType::Function
                 }
             }
         }.as_str()).unwrap();
         let rpc_function_impl_item = syn::parse_item(quote! {
-            impl #syn_rpc_generics ::rpc::RpcFunction for #name<#(#generic_types2),*> {
+            impl #syn_function_generics ::rpc::RpcFunction for #name<#(#generic_types2),*> {
                 type Reply = #output_ty;
             }
         }.as_str()).unwrap();
@@ -663,7 +683,7 @@ fn names_to_type_ir(names: &[String], type_parameters: &[TypeIr]) -> error::Resu
         }
     }
 
-    let segments = iter::once("schema").chain(names.iter().map(String::as_str));
+    let segments = vec!["schema", "types"].into_iter().chain(names.iter().map(String::as_str));
     let ty = if type_parameters.len() == 0 {
         syn_type_from_components(true, segments, vec![])
     } else {

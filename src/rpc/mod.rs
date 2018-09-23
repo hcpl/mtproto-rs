@@ -10,9 +10,9 @@ use erased_serde::Serialize as ErasedSerialize;
 use serde::Deserialize;
 use toml;
 
-use error;
-use schema::FutureSalt;
-use tl::dynamic::TLObject;
+use ::error;
+use ::schema::types;
+use ::tl::dynamic::TLObject;
 
 
 pub mod auth;
@@ -91,8 +91,8 @@ pub struct Salt {
     salt: i64,
 }
 
-impl From<FutureSalt> for Salt {
-    fn from(fs: FutureSalt) -> Self {
+impl From<types::FutureSalt> for Salt {
+    fn from(fs: types::FutureSalt) -> Self {
         Salt {
             valid_since: Utc.timestamp(fs.valid_since as i64, 0), // from i32
             valid_until: Utc.timestamp(fs.valid_until as i64, 0), // same here

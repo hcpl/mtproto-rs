@@ -67,7 +67,7 @@ impl ConnectionHttp {
         let request_future = client
             .request(http_request)
             .and_then(|res| res.into_body().concat2())
-            .map(|data| data.to_vec())
+            .map(|data| data.to_vec())  // FIXME: remove excessive allocation
             .map_err(|err| err.into());
 
         Box::new(request_future.and_then(move |response_bytes| {

@@ -19,7 +19,7 @@ use ::network::{
     connection::Connection,
     state::State,
 };
-use ::schema;
+use ::schema::{functions, types};
 use ::utils::{
     little_endian_i128_from_array,
     little_endian_i128_into_array,
@@ -96,7 +96,7 @@ fn auth_step1<C: Connection>(input: Step1Input<C>)
     -> Box<Future<Item = Step2Input<C>, Error = error::Error> + Send>
 {
     let nonce = rand::random();
-    let req_pq = schema::rpc::req_pq { nonce };
+    let req_pq = functions::req_pq { nonce };
 
     info!("Sending PQ request: {:#?}", req_pq);
     let request = input.conn.request_plain(input.state, req_pq);
@@ -109,7 +109,7 @@ fn auth_step1<C: Connection>(input: Step1Input<C>)
 struct Step2Input<C> {
     conn: C,
     state: State,
-    res_pq: schema::ResPQ,
+    res_pq: types::ResPQ,
     nonce: i128,
 }
 
@@ -118,7 +118,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
     -> Box<Future<Item = Step3Input<C>, Error = error::Error> + Send>
 {
     fn prepare_step2<C: Connection>(input: Step2Input<C>)
-        -> error::Result<(C, State, schema::rpc::req_DH_params, i128, i128, I256)>
+        -> error::Result<(C, State, functions::req_DH_params, i128, i128, I256)>
     {
         let Step2Input { conn, state, res_pq, nonce } = input;
 
@@ -139,7 +139,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
         let q = u32_to_vec(q_u32);
         let new_nonce = rand::random();
 
-        let p_q_inner_data = Boxed::new(schema::P_Q_inner_data::p_q_inner_data(schema::p_q_inner_data {
+        let p_q_inner_data = Boxed::new(types::P_Q_inner_data::p_q_inner_data(types::p_q_inner_data {
             pq: res_pq.pq.clone(),
             p: p.clone().into(),
             q: q.clone().into(),
@@ -169,7 +169,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
         let encrypted_data = rsa_public_key.encrypt(&p_q_inner_data_serialized)?;
         debug!("Encrypted data: {:?}", encrypted_data.as_ref());
 
-        let req_dh_params = schema::rpc::req_DH_params {
+        let req_dh_params = functions::req_DH_params {
             nonce,
             server_nonce: res_pq.server_nonce,
             p: p.into(),
@@ -201,7 +201,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
 struct Step3Input<C> {
     conn: C,
     state: State,
-    server_dh_params: schema::Server_DH_Params,
+    server_dh_params: types::Server_DH_Params,
     nonce: i128,
     server_nonce: i128,
     new_nonce: I256,
@@ -212,14 +212,14 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
     -> Box<Future<Item = Step4Input<C>, Error = error::Error> + Send>
 {
     fn prepare_step3<C: Connection>(input: Step3Input<C>)
-        -> error::Result<(C, State, schema::rpc::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
+        -> error::Result<(C, State, functions::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
     {
         let Step3Input { conn, state, server_dh_params, nonce, server_nonce, new_nonce } = input;
 
         info!("Received server DH parameters: {:#?}", server_dh_params);
 
         match server_dh_params {
-            schema::Server_DH_Params::server_DH_params_fail(server_dh_params_fail) => {
+            types::Server_DH_Params::server_DH_params_fail(server_dh_params_fail) => {
                 error!("DH request failed: {:?}", server_dh_params_fail);
 
                 check_nonce(nonce, server_dh_params_fail.nonce)?;
@@ -228,7 +228,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
 
                 bail!(ErrorKind::ServerDHParamsFail);
             },
-            schema::Server_DH_Params::server_DH_params_ok(server_dh_params_ok) => {
+            types::Server_DH_Params::server_DH_params_ok(server_dh_params_ok) => {
                 check_nonce(nonce, server_dh_params_ok.nonce)?;
                 check_server_nonce(server_nonce, server_dh_params_ok.server_nonce)?;
 
@@ -260,7 +260,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 let (server_dh_inner_server_hash, server_dh_inner_bytes) =
                     server_dh_inner_decrypted.split_at(SHA1_HASH_LENGTH);
                 let (server_dh_inner, random_tail) =
-                    serde_mtproto::from_bytes_reuse::<Boxed<schema::Server_DH_inner_data>>(server_dh_inner_bytes, &[])?;
+                    serde_mtproto::from_bytes_reuse::<Boxed<types::Server_DH_inner_data>>(server_dh_inner_bytes, &[])?;
 
                 let server_dh_inner_len = server_dh_inner_bytes.len() - random_tail.len();
                 let server_dh_inner_client_hash =
@@ -277,7 +277,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                     &server_dh_inner.dh_prime,
                 )?;
 
-                let client_dh_inner = Boxed::new(schema::Client_DH_Inner_Data {
+                let client_dh_inner = Boxed::new(types::Client_DH_Inner_Data {
                     nonce,
                     server_nonce,
                     retry_id: 0,  // TODO: actual retry ID
@@ -305,7 +305,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                     &client_dh_inner_to_encrypt,
                 ).into();
 
-                let set_client_dh_params = schema::rpc::set_client_DH_params {
+                let set_client_dh_params = functions::set_client_DH_params {
                     nonce,
                     server_nonce,
                     encrypted_data,
@@ -346,7 +346,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
 struct Step4Input<C> {
     conn: C,
     state: State,
-    set_client_dh_params_answer: schema::Set_client_DH_params_answer,
+    set_client_dh_params_answer: types::Set_client_DH_params_answer,
     nonce: i128,
     server_nonce: i128,
     new_nonce: I256,
@@ -378,19 +378,20 @@ fn auth_step4<C: Connection>(input: Step4Input<C>)
     };
 
     match set_client_dh_params_answer {
-        schema::Set_client_DH_params_answer::dh_gen_ok(dh_gen_ok) => {
+        types::Set_client_DH_params_answer::dh_gen_ok(dh_gen_ok) => {
             info!("DH params verification succeeded: {:?}", dh_gen_ok);
 
             check_nonce(nonce, dh_gen_ok.nonce)?;
             check_server_nonce(server_nonce, dh_gen_ok.server_nonce)?;
             check_new_nonce_derived_hash(new_nonce, 1, auth_key.aux_hash, dh_gen_ok.new_nonce_hash1)?;
 
+            // This will drop the old auth key, if present
             state.auth_key = Some(auth_key);
             state.time_offset = time_offset;
 
             Ok(AuthValues { conn, state })
         },
-        schema::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
+        types::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
             info!("DH params verification needs a retry: {:?}", dh_gen_retry);
 
             check_nonce(nonce, dh_gen_retry.nonce)?;
@@ -400,7 +401,7 @@ fn auth_step4<C: Connection>(input: Step4Input<C>)
             // TODO: implement DH retries
             unimplemented!();
         },
-        schema::Set_client_DH_params_answer::dh_gen_fail(dh_gen_fail) => {
+        types::Set_client_DH_params_answer::dh_gen_fail(dh_gen_fail) => {
             error!("DH params verification failed: {:?}", dh_gen_fail);
 
             check_nonce(nonce, dh_gen_fail.nonce)?;

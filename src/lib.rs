@@ -67,8 +67,9 @@ mod manual_types;
 #[macro_use]
 mod utils;
 
-pub mod bigint;
-pub mod crypto;
+pub(crate) mod bigint;
+pub(crate) mod crypto;
+
 pub mod error;
 pub mod network;
 pub mod protocol;

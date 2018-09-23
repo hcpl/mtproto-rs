@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use serde::de::{self, Deserialize, Deserializer, DeserializeOwned};
 use serde_mtproto::Identifiable;
 
-use ::schema;
+use ::schema::types;
 use ::tl::gzip_packed::GzipPacked;
 
 
@@ -22,7 +22,7 @@ pub enum RpcResult<T> {
     },
     Error {
         req_msg_id: i64,
-        error: schema::RpcError,
+        error: types::RpcError,
     },
 }
 
