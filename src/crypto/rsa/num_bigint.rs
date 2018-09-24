@@ -30,14 +30,16 @@ impl RsaPublicKey {
     }
 
     pub(crate) fn sha1_fingerprint(&self) -> error::Result<[u8; 20]> {
-        let mut buf = Vec::new();
-
         let n_bytes = self.n.to_bytes_be();
         let e_bytes = self.e.to_bytes_be();
 
-        // Need to allocate new space, so use `&mut buf` instead of `buf.as_mut_slice()`
-        serde_mtproto::to_writer(&mut buf, &ByteBuf::from(n_bytes))?;
-        serde_mtproto::to_writer(&mut buf, &ByteBuf::from(e_bytes))?;
+        let n_bytes_size = serde_mtproto::size_hint_from_byte_seq_len(n_bytes.len())?;
+        let e_bytes_size = serde_mtproto::size_hint_from_byte_seq_len(e_bytes.len())?;
+
+        let mut buf = vec![0; n_bytes_size + e_bytes_size];
+
+        serde_mtproto::to_writer(&mut buf[..n_bytes_size], &ByteBuf::from(n_bytes))?;
+        serde_mtproto::to_writer(&mut buf[n_bytes_size..], &ByteBuf::from(e_bytes))?;
 
         let sha1_fingerprint = array_int! {
             20 => &sha1_from_bytes(&[&buf])?,

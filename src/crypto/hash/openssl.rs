@@ -5,6 +5,7 @@ use openssl::hash;
 use ::error;
 
 
+#[derive(Debug)]
 pub(crate) struct Sha1DigestBytes(hash::DigestBytes);
 
 impl ops::Deref for Sha1DigestBytes {
@@ -27,6 +28,7 @@ pub(crate) fn sha1_from_bytes(parts: &[&[u8]]) -> error::Result<Sha1DigestBytes>
 }
 
 
+#[derive(Debug)]
 pub(crate) struct Sha256DigestBytes(hash::DigestBytes);
 
 impl ops::Deref for Sha256DigestBytes {

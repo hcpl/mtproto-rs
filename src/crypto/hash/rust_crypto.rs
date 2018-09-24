@@ -10,6 +10,7 @@ use sha2::Sha256;
 use ::error;
 
 
+#[derive(Debug)]
 pub(crate) struct Sha1DigestBytes(GenericArray<u8, typenum::U20>);
 
 impl ops::Deref for Sha1DigestBytes {
@@ -32,6 +33,7 @@ pub(crate) fn sha1_from_bytes(parts: &[&[u8]]) -> error::Result<Sha1DigestBytes>
 }
 
 
+#[derive(Debug)]
 pub(crate) struct Sha256DigestBytes(GenericArray<u8, typenum::U32>);
 
 impl ops::Deref for Sha256DigestBytes {
