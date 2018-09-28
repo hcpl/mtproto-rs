@@ -22,5 +22,7 @@ script:
   - ls -la
   - cargo test -vv --all
   - cargo build -vv --all --examples
-  - cargo test -vv --features non-openssl-impls --all
-  - cargo build -vv --features non-openssl-impls --all --examples
+  - cargo test -vv --features openssl --all
+  - cargo build -vv --features openssl --all --examples
+  - cargo test -vv --no-default-features --features openssl --all
+  - cargo build -vv --no-default-features --features openssl --all --examples
