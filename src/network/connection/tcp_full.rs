@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -18,6 +19,7 @@ use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::utils::safe_uint_cast;
 
 
 #[derive(Debug)]
@@ -41,7 +43,7 @@ impl ConnectionTcpFull {
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -49,7 +51,7 @@ impl ConnectionTcpFull {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -57,28 +59,29 @@ impl ConnectionTcpFull {
     }
 
     fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
               N: MessageCommon<U> + 'static,
     {
-        let request_message = tryf!(state.create_message::<T, M>(request_data));
-        debug!("Message to send: {:#?}", request_message);
+        state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
 
-        let Self { socket, server_addr, mut sent_counter } = self;
-        let request_future = perform_request(&state, socket, request_message, &mut sent_counter);
+            let Self { socket, server_addr, mut sent_counter } = self;
+            let request_future = perform_request(&state, socket, request_message, &mut sent_counter);
 
-        Box::new(request_future.and_then(move |(socket, response_bytes)| {
-            tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
-                .into_future()
-                .and_then(move |msg| {
-                    let conn = Self { socket, server_addr, sent_counter };
-                    let response = msg.into_body();
+            request_future.and_then(move |(socket, response_bytes)| {
+                tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
+                    .into_future()
+                    .and_then(move |msg| {
+                        let conn = Self { socket, server_addr, sent_counter };
+                        let response = msg.into_body();
 
-                    futures::future::ok((conn, state, response))
-                })
-        }))
+                        futures::future::ok((conn, state, response))
+                    })
+            })
+        })
     }
 }
 
@@ -108,7 +111,7 @@ impl Connection for ConnectionTcpFull {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request_plain(state, request_data)
+        Box::new(self.request_plain(state, request_data))
     }
 
     fn request<T, U>(self, state: State, request_data: T)
@@ -116,68 +119,86 @@ impl Connection for ConnectionTcpFull {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request(state, request_data)
+        Box::new(self.request(state, request_data))
     }
 }
 
 
 fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_counter: &mut u32)
-    -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
-    where T: fmt::Debug + Serialize + TLObject,
-          M: MessageCommon<T>,
+    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send
+where T: fmt::Debug + Serialize + TLObject,
+      M: MessageCommon<T>,
 {
-    let raw_message = tryf!(message.to_raw(state.auth_raw_key(), state.version));
+    prepare_data(state, message, sent_counter).into_future().and_then(|data| {
+        let request = tokio_io::io::write_all(socket, data);
 
-    let size = tryf!(raw_message.size_hint()) + 12;  // FIXME: May overflow on 32-bit systems
-    let data = if size <= 0xff_ff_ff_ff {
-        let mut buf = vec![0; size];
+        request.and_then(|(socket, _request_bytes)| {
+            tokio_io::io::read_exact(socket, [0; 8])
+        }).map_err(Into::into).and_then(|(socket, first_bytes)| {
+            let len = LittleEndian::read_u32(&first_bytes[0..4]);
+            let ulen = len as usize;  // FIXME: use safe cast here
+            // TODO: check seq_no
+            let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-        LittleEndian::write_u32(&mut buf[0..4], size as u32);  // cast is safe here
-        LittleEndian::write_u32(&mut buf[4..8], *sent_counter);
-        tryf!(serde_mtproto::to_writer(&mut buf[8..size-4], &raw_message));
+            tokio_io::io::read_exact(socket, vec![0; ulen - 8])
+                .map_err(Into::into)
+                .and_then(move |(socket, last_bytes)| {
+                    let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
+                    let mut body = last_bytes;
+                    body.truncate(ulen - 12);
 
-        let crc = crc32::checksum_ieee(&buf[0..size-4]);
-        LittleEndian::write_u32(&mut buf[size-4..], crc);
+                    let mut value = 0;
+                    value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[0..4]);
+                    value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
+                    value = crc32::update(value, &crc32::IEEE_TABLE, &body);
+
+                    if value == checksum {
+                        Ok((socket, body))
+                    } else {
+                        bail!(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum))
+                    }
+                })
+        })
+    })
+}
+
+fn prepare_data<T, M>(state: &State, message: M, sent_counter: &mut u32) -> error::Result<Vec<u8>>
+where T: fmt::Debug + Serialize + TLObject,
+      M: MessageCommon<T>,
+{
+    let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
+
+    const SIZE_SIZE: usize = mem::size_of::<u32>();
+    const SENT_COUNTER_SIZE: usize = mem::size_of::<u32>();
+    let raw_message_size = raw_message.size_hint()?;
+    const CRC_SIZE: usize = mem::size_of::<u32>();
+
+    let data_size = SIZE_SIZE + SENT_COUNTER_SIZE + raw_message_size + CRC_SIZE;  // FIXME: May overflow on 32-bit systems
+
+    if let Ok(data_size_u32) = safe_uint_cast::<usize, u32>(data_size) {
+        let mut buf = vec![0; data_size];
+
+        {
+            let (size_bytes, rest) = buf.split_at_mut(SIZE_SIZE);
+            let (sent_counter_bytes, rest2) = rest.split_at_mut(SENT_COUNTER_SIZE);
+            let (message_bytes, _) = rest2.split_at_mut(raw_message_size);
+
+            LittleEndian::write_u32(size_bytes, data_size_u32);
+            LittleEndian::write_u32(sent_counter_bytes, *sent_counter);
+            serde_mtproto::to_writer(message_bytes, &raw_message)?;
+        }
+
+        {
+            let (non_crc_bytes, crc_bytes) = buf.split_at_mut(data_size - CRC_SIZE);
+
+            let crc = crc32::checksum_ieee(&*non_crc_bytes);
+            LittleEndian::write_u32(crc_bytes, crc);
+        }
 
         *sent_counter += 1;
 
-        buf
+        Ok(buf)
     } else {
-        bailf!(ErrorKind::MessageTooLong(size));
-    };
-
-    let request = tokio_io::io::write_all(socket, data);
-
-    let response = request.and_then(|(socket, _request_bytes)| {
-        tokio_io::io::read_exact(socket, [0; 8])
-    }).map_err(Into::into).and_then(|(socket, first_bytes)| {
-        let len = LittleEndian::read_u32(&first_bytes[0..4]);
-        let ulen = len as usize;  // FIXME: use safe cast here
-        // TODO: check seq_no
-        let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
-
-        tokio_io::io::read_exact(socket, vec![0; ulen - 8]).map_err(Into::into)
-            .and_then(move |(socket, last_bytes)|
-        {
-            let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
-            let mut body = last_bytes;
-            body.truncate(ulen - 12);
-
-            let mut value = 0;
-            value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[0..4]);
-            value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
-            value = crc32::update(value, &crc32::IEEE_TABLE, &body);
-
-            let result_future = if value == checksum {
-                futures::future::ok((socket, body))
-            } else {
-                futures::future::err(
-                    error::Error::from(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum)))
-            };
-
-            result_future
-        })
-    });
-
-    Box::new(response)
+        bail!(ErrorKind::MessageTooLong(data_size));
+    }
 }

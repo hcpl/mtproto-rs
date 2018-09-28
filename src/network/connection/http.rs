@@ -33,7 +33,7 @@ impl ConnectionHttp {
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -41,7 +41,7 @@ impl ConnectionHttp {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -49,35 +49,39 @@ impl ConnectionHttp {
     }
 
     fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
               N: MessageCommon<U> + 'static,
     {
-        let request_message = tryf!(state.create_message::<T, M>(request_data));
-        debug!("Message to send: {:#?}", request_message);
+        state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
 
-        let http_request = tryf!(create_http_request(&state, request_message, &self.server_addr));
-        debug!("HTTP request: {:?}", &http_request);
-
-        // Split up parts, to be reassembled afterwards
-        let Self { client, server_addr } = self;
-
-        let request_future = client
-            .request(http_request)
-            .and_then(|res| res.into_body().concat2())
-            .map_err(|err| err.into());
-
-        Box::new(request_future.and_then(move |response_bytes| {
-            parse_response::<U, N>(&state, &response_bytes)
+            create_http_request(&state, request_message, &self.server_addr)
                 .into_future()
-                .and_then(move |msg| {
-                    let conn = Self { client, server_addr };
+                .and_then(|http_request| {
+                    debug!("HTTP request: {:?}", &http_request);
 
-                    futures::future::ok((conn, state, msg.into_body()))
+                    // Split up parts, to be reassembled afterwards
+                    let Self { client, server_addr } = self;
+
+                    let request_future = client
+                        .request(http_request)
+                        .and_then(|res| res.into_body().concat2())
+                        .map_err(|err| err.into());
+
+                    request_future.and_then(move |response_bytes| {
+                        parse_response::<U, N>(&state, &response_bytes)
+                            .into_future()
+                            .and_then(move |msg| {
+                                let conn = Self { client, server_addr };
+
+                                futures::future::ok((conn, state, msg.into_body()))
+                            })
+                    })
                 })
-        }))
+        })
     }
 }
 
@@ -87,7 +91,7 @@ impl Connection for ConnectionHttp {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request_plain(state, request_data)
+        Box::new(self.request_plain(state, request_data))
     }
 
     fn request<T, U>(self, state: State, request_data: T)
@@ -95,7 +99,7 @@ impl Connection for ConnectionHttp {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request(state, request_data)
+        Box::new(self.request(state, request_data))
     }
 }
 

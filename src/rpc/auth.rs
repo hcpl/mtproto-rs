@@ -2,7 +2,7 @@ use std::fmt;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
-use futures::{self, Future, Poll};
+use futures::{self, Future, IntoFuture, Poll};
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
@@ -93,7 +93,7 @@ struct Step1Input<C> {
 
 /// Step 1: DH exchange initiation using PQ request
 fn auth_step1<C: Connection>(input: Step1Input<C>)
-    -> Box<Future<Item = Step2Input<C>, Error = error::Error> + Send>
+    -> impl Future<Item = Step2Input<C>, Error = error::Error> + Send
 {
     let nonce = rand::random();
     let req_pq = functions::req_pq { nonce };
@@ -101,9 +101,9 @@ fn auth_step1<C: Connection>(input: Step1Input<C>)
     info!("Sending PQ request: {:#?}", req_pq);
     let request = input.conn.request_plain(input.state, req_pq);
 
-    Box::new(request.map(move |(conn, state, res_pq)| {
+    request.map(move |(conn, state, res_pq)| {
         Step2Input { conn, state, res_pq, nonce }
-    }))
+    })
 }
 
 struct Step2Input<C> {
@@ -115,7 +115,7 @@ struct Step2Input<C> {
 
 /// Step 2: Presenting PQ proof of work & server authentication
 fn auth_step2<C: Connection>(input: Step2Input<C>)
-    -> Box<Future<Item = Step3Input<C>, Error = error::Error> + Send>
+    -> impl Future<Item = Step3Input<C>, Error = error::Error> + Send
 {
     fn prepare_step2<C: Connection>(input: Step2Input<C>)
         -> error::Result<(C, State, functions::req_DH_params, i128, i128, I256)>
@@ -181,21 +181,22 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
         Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
     }
 
-    let (conn, state, req_dh_params, nonce, server_nonce, new_nonce) = tryf!(prepare_step2(input));
+    prepare_step2(input)
+        .into_future()
+        .and_then(|(conn, state, req_dh_params, nonce, server_nonce, new_nonce)| {
+            info!("Sending DH key exchange request: {:?}", req_dh_params);
 
-    info!("Sending DH key exchange request: {:?}", req_dh_params);
-    let request = conn.request_plain(state, req_dh_params);
-
-    Box::new(request.map(move |(conn, state, server_dh_params)| {
-        Step3Input {
-            conn,
-            state,
-            server_dh_params,
-            nonce,
-            server_nonce,
-            new_nonce,
-        }
-    }))
+            conn.request_plain(state, req_dh_params).map(move |(conn, state, server_dh_params)| {
+                Step3Input {
+                    conn,
+                    state,
+                    server_dh_params,
+                    nonce,
+                    server_nonce,
+                    new_nonce,
+                }
+            })
+        })
 }
 
 struct Step3Input<C> {
@@ -209,7 +210,7 @@ struct Step3Input<C> {
 
 /// Step 3: DH key exchange complete
 fn auth_step3<C: Connection>(input: Step3Input<C>)
-    -> Box<Future<Item = Step4Input<C>, Error = error::Error> + Send>
+    -> impl Future<Item = Step4Input<C>, Error = error::Error> + Send
 {
     fn prepare_step3<C: Connection>(input: Step3Input<C>)
         -> error::Result<(C, State, functions::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
@@ -319,28 +320,37 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 let local_timestamp = Utc::now().timestamp() as i32;
                 let time_offset = server_dh_inner.server_time - local_timestamp;
 
-                Ok((conn, state, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset))
+                Ok((
+                    conn, state, set_client_dh_params,
+                    nonce, server_nonce, new_nonce,
+                    auth_key_bytes, time_offset,
+                ))
             },
         }
     }
 
-    let (conn, state, set_client_dh_params, nonce, server_nonce, new_nonce, auth_key_bytes, time_offset) =
-        tryf!(prepare_step3(input));
-
-    let request = conn.request_plain(state, set_client_dh_params);
-
-    Box::new(request.map(move |(conn, state, set_client_dh_params_answer)| {
-        Step4Input {
-            conn,
-            state,
-            set_client_dh_params_answer,
-            nonce,
-            server_nonce,
-            new_nonce,
-            auth_key_bytes,
-            time_offset,
-        }
-    }))
+    prepare_step3(input)
+        .into_future()
+        .and_then(|(
+            conn, state, set_client_dh_params,
+            nonce, server_nonce, new_nonce,
+            auth_key_bytes, time_offset,
+        )| {
+            conn.request_plain(state, set_client_dh_params).map(move |(
+                conn, state, set_client_dh_params_answer,
+            )| {
+                Step4Input {
+                    conn,
+                    state,
+                    set_client_dh_params_answer,
+                    nonce,
+                    server_nonce,
+                    new_nonce,
+                    auth_key_bytes,
+                    time_offset,
+                }
+            })
+        })
 }
 
 struct Step4Input<C> {

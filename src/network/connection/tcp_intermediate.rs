@@ -1,5 +1,5 @@
 use std::fmt;
-use std::io;
+use std::mem;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -18,6 +18,7 @@ use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::utils::safe_uint_cast;
 
 
 #[derive(Debug)]
@@ -41,7 +42,7 @@ impl ConnectionTcpIntermediate {
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -49,7 +50,7 @@ impl ConnectionTcpIntermediate {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -57,28 +58,29 @@ impl ConnectionTcpIntermediate {
     }
 
     fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
               N: MessageCommon<U> + 'static,
     {
-        let request_message = tryf!(state.create_message::<T, M>(request_data));
-        debug!("Message to send: {:#?}", request_message);
+        state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
 
-        let Self { socket, server_addr, mut is_first_request } = self;
-        let request_future = perform_request(&state, socket, request_message, &mut is_first_request);
+            let Self { socket, server_addr, mut is_first_request } = self;
+            let request_future = perform_request(&state, socket, request_message, &mut is_first_request);
 
-        Box::new(request_future.and_then(move |(socket, response_bytes)| {
-            tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
-                .into_future()
-                .and_then(move |msg| {
-                    let conn = Self { socket, server_addr, is_first_request };
-                    let response = msg.into_body();
+            request_future.and_then(move |(socket, response_bytes)| {
+                tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
+                    .into_future()
+                    .and_then(move |msg| {
+                        let conn = Self { socket, server_addr, is_first_request };
+                        let response = msg.into_body();
 
-                    futures::future::ok((conn, state, response))
-                })
-        }))
+                        futures::future::ok((conn, state, response))
+                    })
+            })
+        })
     }
 }
 
@@ -108,7 +110,7 @@ impl Connection for ConnectionTcpIntermediate {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request_plain(state, request_data)
+        Box::new(self.request_plain(state, request_data))
     }
 
     fn request<T, U>(self, state: State, request_data: T)
@@ -116,65 +118,57 @@ impl Connection for ConnectionTcpIntermediate {
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
-        self.request(state, request_data)
+        Box::new(self.request(state, request_data))
     }
 }
 
 
 fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, is_first_request: &mut bool)
-    -> Box<Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send>
-    where T: fmt::Debug + Serialize + TLObject,
-          M: MessageCommon<T>,
+    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send
+where T: fmt::Debug + Serialize + TLObject,
+      M: MessageCommon<T>,
 {
-    let raw_message = tryf!(message.to_raw(state.auth_raw_key(), state.version));
+    prepare_data(state, message, is_first_request).into_future().and_then(|data| {
+        let request = tokio_io::io::write_all(socket, data);
 
-    let size = tryf!(raw_message.size_hint());
-    let data = if size <= 0xff_ff_ff_ff {
-        let mut buf = vec![0; 4 + size];
-
-        LittleEndian::write_u32(&mut buf[0..4], size as u32);  // cast is safe here
-        tryf!(serde_mtproto::to_writer(&mut buf[4..], &raw_message));
-
-        buf
-    } else {
-        bailf!(ErrorKind::MessageTooLong(size));
-    };
-
-    let init = if *is_first_request {
-        *is_first_request = false;
-        Step1Future::FirstRequest(tokio_io::io::write_all(socket, b"\xee\xee\xee\xee".as_ref()))
-    } else {
-        Step1Future::NonFirstRequest(futures::future::ok((socket, [].as_ref())))
-    };
-
-    let request = init.and_then(|(socket, _init_bytes)| {
-        tokio_io::io::write_all(socket, data)
-    });
-
-    let response = request.and_then(|(socket, _request_bytes)| {
-        tokio_io::io::read_exact(socket, [0; 4])
-    }).and_then(|(socket, bytes_len)| {
-        let len = LittleEndian::read_u32(&bytes_len);
-        tokio_io::io::read_exact(socket, vec![0; len as usize]) // FIXME: use safe cast
-    });
-
-    Box::new(response.map_err(Into::into))
+        request.and_then(|(socket, _request_bytes)| {
+            tokio_io::io::read_exact(socket, [0; 4])
+        }).and_then(|(socket, bytes_len)| {
+            let len = LittleEndian::read_u32(&bytes_len);
+            tokio_io::io::read_exact(socket, vec![0; len as usize]) // FIXME: use safe cast
+        }).map_err(Into::into)
+    })
 }
 
+fn prepare_data<T, M>(state: &State, message: M, is_first_request: &mut bool) -> error::Result<Vec<u8>>
+where T: fmt::Debug + Serialize + TLObject,
+      M: MessageCommon<T>,
+{
+    let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
+    let data_size = raw_message.size_hint()?;
 
-enum Step1Future {
-    FirstRequest(tokio_io::io::WriteAll<TcpStream, &'static [u8]>),
-    NonFirstRequest(futures::future::FutureResult<(TcpStream, &'static [u8]), io::Error>),
-}
+    let init: &[u8] = if mem::replace(is_first_request, false) {
+        b"\xee\xee\xee\xee"
+    } else {
+        b""
+    };
 
-impl Future for Step1Future {
-    type Item = (TcpStream, &'static [u8]);
-    type Error = io::Error;
+    if let Ok(data_size_u32) = safe_uint_cast::<usize, u32>(data_size) {
+        let size_size = mem::size_of_val(&data_size_u32);
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match *self {
-            Step1Future::FirstRequest(ref mut fut) => fut.poll(),
-            Step1Future::NonFirstRequest(ref mut fut) => fut.poll(),
+        // FIXME: May overflow on 32-bit systems
+        let mut buf = vec![0; init.len() + size_size + data_size];
+        {
+            let (init_bytes, rest) = buf.split_at_mut(init.len());
+            let (size_bytes, message_bytes) = rest.split_at_mut(size_size);
+
+            init_bytes.copy_from_slice(init);
+            LittleEndian::write_u32(size_bytes, data_size_u32);
+            serde_mtproto::to_writer(message_bytes, &raw_message)?;
         }
+
+        Ok(buf)
+    } else {
+        bail!(ErrorKind::MessageTooLong(data_size));
     }
 }

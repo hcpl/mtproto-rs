@@ -65,21 +65,6 @@ fn i128_to_parts(n: i128) -> (i64, u64) {
 }
 
 
-macro_rules! bailf {
-    ($e:expr) => {
-        return Box::new(::futures::future::err($e.into()))
-    }
-}
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match { $e } {
-            Ok(v) => v,
-            Err(e) => bailf!(e),
-        }
-    }
-}
-
 macro_rules! array_int {
     ($($len:tt => $source:expr,)+) => {{
         let mut arr = [0; 0 $(+ $len)+];
