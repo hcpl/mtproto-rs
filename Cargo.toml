@@ -44,6 +44,7 @@ serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "cbe4fca"
 serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "cbe4fca" }
 sha-1 = { version = "0.7", optional = true }
 sha2 = { version = "0.7", optional = true }
+tokio-executor = "0.1"
 tokio-io = "0.1"
 tokio-tcp = "0.1"
 toml = "0.4"

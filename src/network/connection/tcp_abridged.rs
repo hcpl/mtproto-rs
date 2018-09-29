@@ -1,20 +1,18 @@
 use std::fmt;
-use std::io;
 use std::mem;
 use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
-use futures::{self, Future, IntoFuture, Poll};
-use log;
+use futures::{self, Future, IntoFuture};
+use futures::future::Either;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_io;
-use tokio_tcp::{self, TcpStream};
+use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::Connection;
-use ::network::connection::server::TCP_SERVER_ADDRS;
+use ::network::connection::common::{SERVER_ADDRS, Connection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
@@ -24,25 +22,28 @@ use ::tl::message::{Message, MessageCommon, MessagePlain};
 #[derive(Debug)]
 pub struct ConnectionTcpAbridged {
     socket: TcpStream,
-    server_addr: SocketAddr,
     is_first_request: bool,
 }
 
 impl ConnectionTcpAbridged {
-    pub fn connect(server_addr: SocketAddr) -> ConnectFuture {
-        if log_enabled!(log::Level::Info) {
-            info!("New TCP connection in abridged mode to {}", server_addr);
-        }
+    pub fn connect(server_addr: SocketAddr)
+        -> impl Future<Item = Self, Error = error::Error>
+    {
+        info!("New TCP connection in abridged mode to {}", server_addr);
 
-        ConnectFuture { socket_fut: TcpStream::connect(&server_addr), server_addr }
+        TcpStream::connect(&server_addr).map_err(Into::into).map(|socket| {
+            ConnectionTcpAbridged { socket, is_first_request: true }
+        })
     }
 
-    pub fn with_default_server() -> ConnectFuture {
-        Self::connect(TCP_SERVER_ADDRS[0])
+    pub fn with_default_server()
+        -> impl Future<Item = Self, Error = error::Error>
+    {
+        Self::connect(SERVER_ADDRS[0])
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -50,7 +51,7 @@ impl ConnectionTcpAbridged {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -58,7 +59,7 @@ impl ConnectionTcpAbridged {
     }
 
     fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
@@ -67,40 +68,20 @@ impl ConnectionTcpAbridged {
         state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
             debug!("Message to send: {:#?}", request_message);
 
-            let Self { socket, server_addr, mut is_first_request } = self;
+            let Self { socket, mut is_first_request } = self;
             let request_future = perform_request(&state, socket, request_message, &mut is_first_request);
 
             request_future.and_then(move |(socket, response_bytes)| {
                 tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
                     .into_future()
-                    .and_then(move |msg| {
-                        let conn = Self { socket, server_addr, is_first_request };
+                    .map(move |msg| {
+                        let conn = Self { socket, is_first_request };
                         let response = msg.into_body();
 
-                        futures::future::ok((conn, state, response))
+                        (conn, state, response)
                     })
             })
         })
-    }
-}
-
-pub struct ConnectFuture {
-    socket_fut: tokio_tcp::ConnectFuture,
-    server_addr: SocketAddr,
-}
-
-impl Future for ConnectFuture {
-    type Item = ConnectionTcpAbridged;
-    type Error = error::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let socket = self.socket_fut.poll()?;
-
-        Ok(socket.map(|socket| ConnectionTcpAbridged {
-            socket,
-            server_addr: self.server_addr,
-            is_first_request: true,
-        }))
     }
 }
 
@@ -124,7 +105,7 @@ impl Connection for ConnectionTcpAbridged {
 
 
 fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, is_first_request: &mut bool)
-    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send
+    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
 where T: fmt::Debug + Serialize + TLObject,
       M: MessageCommon<T>,
 {
@@ -134,40 +115,18 @@ where T: fmt::Debug + Serialize + TLObject,
         request.and_then(|(socket, _request_bytes)| {
             tokio_io::io::read_exact(socket, [0; 1])
         }).and_then(|(socket, byte_id)| {
-            let boxed = if byte_id == [0x7f] {
-                Step2Future::ByteId127(tokio_io::io::read_exact(socket, [0; 3]).map(|(socket, bytes_len)| {
+            if byte_id == [0x7f] {
+                Either::A(tokio_io::io::read_exact(socket, [0; 3]).map(|(socket, bytes_len)| {
                     let len = LittleEndian::read_uint(&bytes_len, 3) as usize * 4;
                     (socket, len)
                 }))
             } else {
-                Step2Future::ByteIdNot127(futures::future::ok((socket, byte_id[0] as usize * 4)))
-            };
-
-            boxed
+                Either::B(futures::future::ok((socket, byte_id[0] as usize * 4)))
+            }
         }).and_then(|(socket, len)| {
             tokio_io::io::read_exact(socket, vec![0; len])
         }).map_err(Into::into)
     })
-}
-
-
-enum Step2Future<F> {
-    ByteId127(futures::future::Map<tokio_io::io::ReadExact<TcpStream, [u8; 3]>, F>),
-    ByteIdNot127(futures::future::FutureResult<(TcpStream, usize), io::Error>),
-}
-
-impl<F> Future for Step2Future<F>
-    where F: FnOnce((TcpStream, [u8; 3])) -> (TcpStream, usize)
-{
-    type Item = (TcpStream, usize);
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match *self {
-            Step2Future::ByteId127(ref mut fut) => fut.poll(),
-            Step2Future::ByteIdNot127(ref mut fut) => fut.poll(),
-        }
-    }
 }
 
 fn prepare_data<T, M>(state: &State, message: M, is_first_request: &mut bool)

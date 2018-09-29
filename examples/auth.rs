@@ -11,7 +11,7 @@ extern crate tokio;
 extern crate log;
 
 
-use futures::{Future, IntoFuture, Stream};
+use futures::{Future, Stream};
 use mtproto::network::connection::{
     Connection, ConnectionHttp, ConnectionTcpAbridged, ConnectionTcpIntermediate, ConnectionTcpFull,
 };
@@ -33,28 +33,18 @@ mod error {
 fn processed_auth<C, F>(conn_fut: F, tag: &'static str)
     -> Box<Future<Item = (), Error = ()> + Send>
     where C: Connection,
-          F: IntoFuture<Item = C, Error = mtproto::Error>,
-          F::Future: Send + 'static,
+          F: Future<Item = C, Error = mtproto::Error> + Send + 'static,
 {
-    Box::new(conn_fut.into_future().and_then(|conn| {
+    Box::new(conn_fut.and_then(|conn| {
         let state = State::new(ProtocolVersion::V1);
         mtproto::rpc::auth::auth_with_state(conn, state)
-    }).then(move |res| {
-        match res {
-            Ok(AuthValues { conn: _conn, state }) => {
-                println!("Success ({}): state = {:?}",
-                    tag, state);
-            },
-            Err(e) => {
-                println!("{} ({})", e, tag);
-                info!("{:?}", e);
-            },
-        }
-
-        Ok(())
+    }).map(move |AuthValues { conn: _conn, state }| {
+        println!("Success ({}): state = {:?}", tag, state);
+    }).map_err(move |e| {
+        println!("{} ({})", e, tag);
+        info!("{:?}", e);
     }))
 }
-
 
 fn main() {
     env_logger::init();
@@ -64,6 +54,6 @@ fn main() {
         processed_auth(ConnectionTcpAbridged::with_default_server(), "tcp-abridged"),
         processed_auth(ConnectionTcpIntermediate::with_default_server(), "tcp-intermediate"),
         processed_auth(ConnectionTcpFull::with_default_server(), "tcp-full"),
-        processed_auth(Ok(ConnectionHttp::with_default_server()), "http"),
+        processed_auth(ConnectionHttp::with_default_server(), "http"),
     ]).for_each(|_| Ok(())));
 }

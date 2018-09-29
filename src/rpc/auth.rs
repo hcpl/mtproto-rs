@@ -2,7 +2,7 @@ use std::fmt;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
-use futures::{self, Future, IntoFuture, Poll};
+use futures::{self, Future, IntoFuture};
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
@@ -59,31 +59,15 @@ pub struct AuthValues<C> {
     pub state: State,
 }
 
-pub struct AuthFuture<C> {
-    fut: Box<Future<Item = AuthValues<C>, Error = error::Error> + Send>,
-}
-
-impl<C: Connection> Future for AuthFuture<C> {
-    type Item = AuthValues<C>;
-    type Error = error::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.fut.poll()
-    }
-}
-
-
 /// Combine all authorization steps defined below.
-pub fn auth_with_state<C: Connection>(conn: C, state: State) -> AuthFuture<C> {
-    let fut = futures::future::ok(Step1Input { conn, state })
+pub fn auth_with_state<C: Connection>(conn: C, state: State)
+    -> impl Future<Item = AuthValues<C>, Error = error::Error>
+{
+    futures::future::ok(Step1Input { conn, state })
         .and_then(auth_step1)
         .and_then(auth_step2)
         .and_then(auth_step3)
-        .and_then(auth_step4);
-
-    AuthFuture {
-        fut: Box::new(fut),
-    }
+        .and_then(auth_step4)
 }
 
 struct Step1Input<C> {
@@ -93,7 +77,7 @@ struct Step1Input<C> {
 
 /// Step 1: DH exchange initiation using PQ request
 fn auth_step1<C: Connection>(input: Step1Input<C>)
-    -> impl Future<Item = Step2Input<C>, Error = error::Error> + Send
+    -> impl Future<Item = Step2Input<C>, Error = error::Error>
 {
     let nonce = rand::random();
     let req_pq = functions::req_pq { nonce };
@@ -115,7 +99,7 @@ struct Step2Input<C> {
 
 /// Step 2: Presenting PQ proof of work & server authentication
 fn auth_step2<C: Connection>(input: Step2Input<C>)
-    -> impl Future<Item = Step3Input<C>, Error = error::Error> + Send
+    -> impl Future<Item = Step3Input<C>, Error = error::Error>
 {
     fn prepare_step2<C: Connection>(input: Step2Input<C>)
         -> error::Result<(C, State, functions::req_DH_params, i128, i128, I256)>
@@ -210,7 +194,7 @@ struct Step3Input<C> {
 
 /// Step 3: DH key exchange complete
 fn auth_step3<C: Connection>(input: Step3Input<C>)
-    -> impl Future<Item = Step4Input<C>, Error = error::Error> + Send
+    -> impl Future<Item = Step4Input<C>, Error = error::Error>
 {
     fn prepare_step3<C: Connection>(input: Step3Input<C>)
         -> error::Result<(C, State, functions::set_client_DH_params, i128, i128, I256, Vec<u8>, i32)>
@@ -338,6 +322,8 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
             nonce, server_nonce, new_nonce,
             auth_key_bytes, time_offset,
         )| {
+            info!("Sending set client DH params request: {:?}", set_client_dh_params);
+
             conn.request_plain(state, set_client_dh_params).map(move |(
                 conn, state, set_client_dh_params_answer,
             )| {

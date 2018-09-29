@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::SocketAddr;
 
 use futures::Future;
 use serde::ser::Serialize;
@@ -7,6 +8,13 @@ use serde::de::DeserializeOwned;
 use ::error;
 use ::tl::TLObject;
 use ::network::state::State;
+
+
+lazy_static! {
+    pub static ref SERVER_ADDRS: [SocketAddr; 1] = [
+        ([149, 154, 167, 51], 443).into(),
+    ];
+}
 
 
 pub trait Connection: Send + Sized + 'static {

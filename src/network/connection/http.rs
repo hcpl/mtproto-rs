@@ -1,39 +1,53 @@
 use std::fmt;
+use std::net::SocketAddr;
 use std::str;
 
-use futures::{self, Future, IntoFuture, Stream};
-use hyper;
+use futures::{Future, IntoFuture, Stream};
+use hyper::{self, client};
 use select::document::Document;
 use select::predicate::Name;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
+use tokio_executor;
+use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::Connection;
-use ::network::connection::server::HTTP_SERVER_ADDRS;
+use ::network::connection::common::{SERVER_ADDRS, Connection};
 use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageSeedCommon};
 
 
 pub struct ConnectionHttp {
-    client: hyper::Client<hyper::client::HttpConnector>,
-    server_addr: hyper::Uri,
+    send_request: client::conn::SendRequest<hyper::Body>,
 }
 
 impl ConnectionHttp {
-    pub fn new(server_addr: hyper::Uri) -> Self {
-        info!("New HTTP connection to {}", &server_addr);
-        Self { client: hyper::Client::new(), server_addr }
+    pub fn connect(server_addr: SocketAddr)
+        -> impl Future<Item = Self, Error = error::Error>
+    {
+        info!("New HTTP connection to {}", server_addr);
+
+        TcpStream::connect(&server_addr).map_err(Into::into).and_then(|socket| {
+            client::conn::Builder::new().handshake(socket).map_err(Into::into)
+        }).map(|(send_request, conn)| {
+            tokio_executor::spawn(conn.map_err(|e| {
+                error!("client connection error: {}", e);
+            }));
+
+            ConnectionHttp { send_request }
+        })
     }
 
-    pub fn with_default_server() -> Self {
-        Self::new(HTTP_SERVER_ADDRS[0].clone())
+    pub fn with_default_server()
+        -> impl Future<Item = ConnectionHttp, Error = error::Error>
+    {
+        Self::connect(SERVER_ADDRS[0])
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -41,45 +55,33 @@ impl ConnectionHttp {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data)
     }
 
-    fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+    fn impl_request<T, U, M, N>(mut self, mut state: State, request_data: T)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
               N: MessageCommon<U> + 'static,
     {
-        state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
+        state.create_message::<T, M>(request_data).and_then(|request_message| {
             debug!("Message to send: {:#?}", request_message);
+            create_http_request(&state, request_message)
+        }).into_future().and_then(|http_request| {
+            debug!("HTTP request: {:?}", http_request);
 
-            create_http_request(&state, request_message, &self.server_addr)
-                .into_future()
-                .and_then(|http_request| {
-                    debug!("HTTP request: {:?}", &http_request);
-
-                    // Split up parts, to be reassembled afterwards
-                    let Self { client, server_addr } = self;
-
-                    let request_future = client
-                        .request(http_request)
-                        .and_then(|res| res.into_body().concat2())
-                        .map_err(|err| err.into());
-
-                    request_future.and_then(move |response_bytes| {
-                        parse_response::<U, N>(&state, &response_bytes)
-                            .into_future()
-                            .and_then(move |msg| {
-                                let conn = Self { client, server_addr };
-
-                                futures::future::ok((conn, state, msg.into_body()))
-                            })
-                    })
+            self.send_request.send_request(http_request)
+                .and_then(|res| res.into_body().concat2())
+                .map_err(|err| err.into())
+                .and_then(|response_bytes| {
+                    parse_response::<U, N>(&state, &response_bytes)
+                        .into_future()
+                        .map(move |msg| (self, state, msg.into_body()))
                 })
         })
     }
@@ -104,7 +106,7 @@ impl Connection for ConnectionHttp {
 }
 
 
-fn create_http_request<T, M>(state: &State, request_message: M, server_addr: &hyper::Uri)
+fn create_http_request<T, M>(state: &State, request_message: M)
     -> error::Result<hyper::Request<hyper::Body>>
     where T: fmt::Debug + Serialize + TLObject,
           M: MessageCommon<T>,
@@ -115,7 +117,7 @@ fn create_http_request<T, M>(state: &State, request_message: M, server_addr: &hy
     // Here we do mean to unwrap since it should fail if something goes wrong anyway
     assert_eq!(raw_message.size_hint().unwrap(), serialized_message.len());
 
-    hyper::Request::post(server_addr)
+    hyper::Request::post("/api")
         .header(hyper::header::CONNECTION, "keep-alive")
         .header(hyper::header::CONTENT_LENGTH, serialized_message.len())
         .body(serialized_message.into())
@@ -135,7 +137,7 @@ fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N
         if str_len >= 7 && &response_str[0..6] == "<html>" && &response_str[str_len-7..] == "</html>" {
             let response_str = str::from_utf8(response_bytes)?;
             let doc = Document::from(response_str);
-            info!("HTML error response:\n{}", response_str);
+            error!("HTML error response:\n{}", response_str);
 
             let error_text = match doc.find(Name("h1")).next() {
                 Some(elem) => elem.text(),

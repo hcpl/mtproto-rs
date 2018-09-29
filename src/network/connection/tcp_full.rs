@@ -4,17 +4,15 @@ use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
-use futures::{self, Future, IntoFuture, Poll};
-use log;
+use futures::{Future, IntoFuture};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
 use tokio_io;
-use tokio_tcp::{self, TcpStream};
+use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::Connection;
-use ::network::connection::server::TCP_SERVER_ADDRS;
+use ::network::connection::common::{SERVER_ADDRS, Connection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
@@ -25,25 +23,28 @@ use ::utils::safe_uint_cast;
 #[derive(Debug)]
 pub struct ConnectionTcpFull {
     socket: TcpStream,
-    server_addr: SocketAddr,
     sent_counter: u32,
 }
 
 impl ConnectionTcpFull {
-    pub fn connect(server_addr: SocketAddr) -> ConnectFuture {
-        if log_enabled!(log::Level::Info) {
-            info!("New TCP connection in full mode to {}", server_addr);
-        }
+    pub fn connect(server_addr: SocketAddr)
+        -> impl Future<Item = Self, Error = error::Error>
+    {
+        info!("New TCP connection in full mode to {}", server_addr);
 
-        ConnectFuture { socket_fut: TcpStream::connect(&server_addr), server_addr }
+        TcpStream::connect(&server_addr).map_err(Into::into).map(|socket| {
+            ConnectionTcpFull { socket, sent_counter: 0 }
+        })
     }
 
-    pub fn with_default_server() -> ConnectFuture {
-        Self::connect(TCP_SERVER_ADDRS[0])
+    pub fn with_default_server()
+        -> impl Future<Item = Self, Error = error::Error>
+    {
+        Self::connect(SERVER_ADDRS[0])
     }
 
     pub fn request_plain<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -51,7 +52,7 @@ impl ConnectionTcpFull {
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -59,7 +60,7 @@ impl ConnectionTcpFull {
     }
 
     fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
-        -> impl Future<Item = (Self, State, U), Error = error::Error> + Send
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
         where T: fmt::Debug + Serialize + TLObject + Send,
               U: fmt::Debug + DeserializeOwned + TLObject + Send,
               M: MessageCommon<T>,
@@ -68,40 +69,20 @@ impl ConnectionTcpFull {
         state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
             debug!("Message to send: {:#?}", request_message);
 
-            let Self { socket, server_addr, mut sent_counter } = self;
+            let Self { socket, mut sent_counter } = self;
             let request_future = perform_request(&state, socket, request_message, &mut sent_counter);
 
             request_future.and_then(move |(socket, response_bytes)| {
                 tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
                     .into_future()
-                    .and_then(move |msg| {
-                        let conn = Self { socket, server_addr, sent_counter };
+                    .map(move |msg| {
+                        let conn = Self { socket, sent_counter };
                         let response = msg.into_body();
 
-                        futures::future::ok((conn, state, response))
+                        (conn, state, response)
                     })
             })
         })
-    }
-}
-
-pub struct ConnectFuture {
-    socket_fut: tokio_tcp::ConnectFuture,
-    server_addr: SocketAddr,
-}
-
-impl Future for ConnectFuture {
-    type Item = ConnectionTcpFull;
-    type Error = error::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let socket = self.socket_fut.poll()?;
-
-        Ok(socket.map(|socket| ConnectionTcpFull {
-            socket,
-            server_addr: self.server_addr,
-            sent_counter: 0,
-        }))
     }
 }
 
@@ -125,7 +106,7 @@ impl Connection for ConnectionTcpFull {
 
 
 fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_counter: &mut u32)
-    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error> + Send
+    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
 where T: fmt::Debug + Serialize + TLObject,
       M: MessageCommon<T>,
 {
@@ -173,7 +154,8 @@ where T: fmt::Debug + Serialize + TLObject,
     let raw_message_size = raw_message.size_hint()?;
     const CRC_SIZE: usize = mem::size_of::<u32>();
 
-    let data_size = SIZE_SIZE + SENT_COUNTER_SIZE + raw_message_size + CRC_SIZE;  // FIXME: May overflow on 32-bit systems
+    // FIXME: May overflow on 32-bit systems
+    let data_size = SIZE_SIZE + SENT_COUNTER_SIZE + raw_message_size + CRC_SIZE;
 
     if let Ok(data_size_u32) = safe_uint_cast::<usize, u32>(data_size) {
         let mut buf = vec![0; data_size];
