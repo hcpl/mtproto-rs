@@ -40,8 +40,8 @@ select = "0.4"
 serde = "1.0"
 serde_bytes = "0.10"
 serde_derive = "1.0"
-serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "c0b6f92" }
-serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "c0b6f92" }
+serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "cbe4fca" }
+serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "cbe4fca" }
 sha-1 = { version = "0.7", optional = true }
 sha2 = { version = "0.7", optional = true }
 tokio-io = "0.1"

@@ -126,7 +126,7 @@ fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N
     where U: fmt::Debug + DeserializeOwned + TLObject,
           N: MessageCommon<U>,
 {
-    debug!("Response bytes: {:?}", &response_bytes);
+    debug!("Response bytes: len = {} --- {:?}", response_bytes.len(), response_bytes);
 
     if let Ok(response_str) = str::from_utf8(response_bytes) {
         let response_str = response_str.trim();

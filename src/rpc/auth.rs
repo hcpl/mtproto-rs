@@ -230,6 +230,8 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 bail!(ErrorKind::ServerDHParamsFail);
             },
             types::Server_DH_Params::server_DH_params_ok(server_dh_params_ok) => {
+                info!("DH request succeeded: {:?}", server_dh_params_ok);
+
                 check_nonce(nonce, server_dh_params_ok.nonce)?;
                 check_server_nonce(server_nonce, server_dh_params_ok.server_nonce)?;
 
@@ -402,7 +404,7 @@ fn auth_step4<C: Connection>(input: Step4Input<C>)
             Ok(AuthValues { conn, state })
         },
         types::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
-            info!("DH params verification needs a retry: {:?}", dh_gen_retry);
+            warn!("DH params verification needs a retry: {:?}", dh_gen_retry);
 
             check_nonce(nonce, dh_gen_retry.nonce)?;
             check_server_nonce(server_nonce, dh_gen_retry.server_nonce)?;
@@ -452,7 +454,7 @@ fn check_new_nonce_hash(expected_new_nonce: I256,
     let expected_hash = little_endian_i128_from_array(array_ref!(expected_sha1, 4, 16));
 
     if expected_hash != found_hash {
-        bail!(ErrorKind::NewNonceHashMismatch(expected_new_nonce, found_hash));
+        bail!(ErrorKind::NewNonceHashMismatch(expected_new_nonce, expected_hash, found_hash));
     }
 
     Ok(())

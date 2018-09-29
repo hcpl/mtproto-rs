@@ -150,11 +150,14 @@ error_chain! {
 
         NewNonceHashMismatch(
             expected_new_nonce: ::manual_types::i256::I256,
+            expected_hash: i128,
             found_hash: i128
         ) {
             description("new nonce hash mismatch")
-            display("new nonce hash mismatch (expected new nonce = {:x}, found hash {:x})",
-                expected_new_nonce, found_hash)
+            display(
+                "new nonce hash mismatch \
+                 (expected new nonce = {:x}, expected hash = {:x}, found hash {:x})",
+                expected_new_nonce, expected_hash, found_hash)
         }
 
         NewNonceDerivedHashMismatch(

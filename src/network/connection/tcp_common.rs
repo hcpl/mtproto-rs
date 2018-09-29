@@ -14,7 +14,7 @@ pub(crate) fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> erro
     where U: fmt::Debug + DeserializeOwned + TLObject,
           N: MessageCommon<U>,
 {
-    debug!("Response bytes: {:?}", response_bytes);
+    debug!("Response bytes: len = {} --- {:?}", response_bytes.len(), response_bytes);
 
     let len = response_bytes.len();
 

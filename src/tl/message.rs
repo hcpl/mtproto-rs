@@ -35,7 +35,7 @@ pub struct RawMessagePlain {
     message_data: UnsizedByteBuf,
 }
 
-impl<T: Serialize + MtProtoSized> MessagePlain<T> {
+impl<T: Serialize + Identifiable + MtProtoSized> MessagePlain<T> {
     pub fn to_raw(&self) -> error::Result<RawMessagePlain> {
         let Self { message_id, ref body } = *self;
 
@@ -144,7 +144,7 @@ pub struct RawMessageSeed {
     encrypted_data_len: usize,
 }
 
-impl<T: Serialize + MtProtoSized> Message<T> {
+impl<T: Serialize + Identifiable + MtProtoSized> Message<T> {
     pub fn to_raw(&self, raw_key: &[u8; 256], version: ProtocolVersion) -> error::Result<RawMessage> {
         let Self { ref data } = *self;
 
@@ -269,7 +269,7 @@ impl PartialEq for RawMessageData {
     }
 }
 
-impl <T: Serialize + MtProtoSized> MessageData<T> {
+impl <T: Serialize + Identifiable + MtProtoSized> MessageData<T> {
     pub fn to_raw(&self, version: ProtocolVersion) -> error::Result<RawMessageData> {
         let Self {
             salt,
