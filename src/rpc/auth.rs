@@ -106,7 +106,7 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
     {
         let Step2Input { conn, state, res_pq, nonce } = input;
 
-        info!("Received PQ response: {:#?}", res_pq);
+        info!("Received PQ response: {:?}", res_pq);
 
         check_nonce(nonce, res_pq.nonce)?;
 
@@ -201,7 +201,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
     {
         let Step3Input { conn, state, server_dh_params, nonce, server_nonce, new_nonce } = input;
 
-        info!("Received server DH parameters: {:#?}", server_dh_params);
+        info!("Received server DH parameters: {:?}", server_dh_params);
 
         match server_dh_params {
             types::Server_DH_Params::server_DH_params_fail(server_dh_params_fail) => {

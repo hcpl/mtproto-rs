@@ -63,7 +63,7 @@ impl ConnectionHttp {
         M: MessageCommon<T>,
     {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
+            debug!("Message to send: {:?}", request_message);
 
             let Self { socket } = self;
 
@@ -100,7 +100,7 @@ impl ConnectionHttp {
 
         perform_recv(socket).and_then(move |(socket, data)| {
             parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
-                debug!("Received message: {:#?}", msg);
+                debug!("Received message: {:?}", msg);
 
                 let conn = Self { socket };
                 let response = msg.into_body();
@@ -209,7 +209,7 @@ impl SendConnectionHttp {
         M: MessageCommon<T>,
     {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
+            debug!("Message to send: {:?}", request_message);
 
             let Self { send_socket } = self;
 
@@ -248,7 +248,7 @@ impl RecvConnectionHttp {
 
         perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
             parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
-                debug!("Received message: {:#?}", msg);
+                debug!("Received message: {:?}", msg);
 
                 let conn = Self { recv_socket };
                 let response = msg.into_body();
@@ -266,28 +266,38 @@ where
 {
     let lines = tokio_io::io::lines(BufReader::new(recv));
 
-    futures::future::loop_fn(lines, |lines| {
-        lines.into_future().map(|(line, lines)| {
+    debug!("Lines stream of buffered recv: {:?}", lines);
+
+    futures::future::loop_fn((0usize, lines), |(i, lines)| {
+        debug!("Loop fn iteration #{}: lines = {:?}", i, lines);
+
+        lines.into_future().map(move |(line, lines)| {
+            debug!("Polled line: line = {:?}, lines = {:?}", line, lines);
+
             match line {
                 Some(line) => {
-                    if line.starts_with("Content-length: ") {
+                    if line.len() >= 16 && line[..16].eq_ignore_ascii_case("Content-Length: ") {
                         let len = line[16..].parse::<usize>().unwrap();
+                        debug!("Content length: {}", len);
+
                         return futures::future::Loop::Break((lines, len));
                     }
 
-                    futures::future::Loop::Continue(lines)
+                    futures::future::Loop::Continue((i + 1, lines))
                 },
                 None => panic!("HTTP response should not end here!"),  // FIXME
             }
         })
     }).and_then(|(lines, len)| {
         lines.into_future().map(move |(line, lines)| {
-            (line, lines, len)
+            assert_eq!(line.unwrap(), "");
+            (lines, len)
         })
-    }).map_err(|(e, _)| e).and_then(|(line, lines, len)| {
-        assert_eq!(line.unwrap(), "");
-
+    }).map_err(|(e, _)| e).and_then(|(lines, len)| {
         tokio_io::io::read_exact(lines.into_inner(), vec![0; len]).map(|(buf_recv, body)| {
+            debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
+                body.len(), buf_recv, body);
+
             (buf_recv.into_inner(), body)
         })
     }).map_err(Into::into)

@@ -66,7 +66,7 @@ impl ConnectionTcpFull {
         M: MessageCommon<T>,
     {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
+            debug!("Message to send: {:?}", request_message);
 
             let Self { socket, mut sent_counter } = self;
 
@@ -103,7 +103,7 @@ impl ConnectionTcpFull {
 
         perform_recv(socket).and_then(move |(socket, data)| {
             tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
-                debug!("Received message: {:#?}", msg);
+                debug!("Received message: {:?}", msg);
 
                 let conn = Self { socket, sent_counter };
                 let response = msg.into_body();
@@ -213,7 +213,7 @@ impl SendConnectionTcpFull {
         M: MessageCommon<T>,
     {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
+            debug!("Message to send: {:?}", request_message);
 
             let Self { send_socket, mut sent_counter } = self;
 
@@ -252,7 +252,7 @@ impl RecvConnectionTcpFull {
 
         perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
             tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
-                debug!("Received message: {:#?}", msg);
+                debug!("Received message: {:?}", msg);
 
                 let conn = Self { recv_socket };
                 let response = msg.into_body();
