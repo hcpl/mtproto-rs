@@ -20,7 +20,6 @@ extern crate lazy_static;
 extern crate log;
 extern crate num_traits;
 extern crate rand;
-extern crate select;
 extern crate serde;
 extern crate serde_bytes;
 #[macro_use]
@@ -61,7 +60,6 @@ cfg_if! {
 }
 
 
-mod manual_types;
 #[macro_use]
 mod utils;
 
@@ -69,6 +67,7 @@ pub(crate) mod bigint;
 pub(crate) mod crypto;
 
 pub mod error;
+pub mod manual_types;
 pub mod network;
 pub mod protocol;
 pub mod rpc;

@@ -4,8 +4,6 @@ use std::net::SocketAddr;
 use std::str;
 
 use futures::{self, Future, IntoFuture, Stream};
-use select::document::Document;
-use select::predicate::Name;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
@@ -335,15 +333,16 @@ fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N
 
         if str_len >= 7 && &response_str[0..6] == "<html>" && &response_str[str_len-7..] == "</html>" {
             let response_str = str::from_utf8(response_bytes)?;
-            let doc = Document::from(response_str);
             error!("HTML error response:\n{}", response_str);
 
-            let error_text = match doc.find(Name("h1")).next() {
-                Some(elem) => elem.text(),
-                None => bail!(ErrorKind::UnknownHtmlErrorStructure(response_str.to_owned())),
-            };
+            if let Some(begin_pos) = response_str.find("<h1>").map(|pos| pos + "<h1>".len()) {
+                if let Some(end_pos) = response_str.find("</h1>") {
+                    let error_text = &response_str[begin_pos..end_pos];
+                    bail!(ErrorKind::HtmlErrorText(error_text.to_owned()));
+                }
+            }
 
-            bail!(ErrorKind::HtmlErrorText(error_text));
+            bail!(ErrorKind::UnknownHtmlErrorStructure(response_str.to_owned()))
         }
     }
 
