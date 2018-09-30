@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "176"]
+#![recursion_limit = "168"]
 
 #[macro_use]
 extern crate arrayref;
@@ -14,8 +14,6 @@ extern crate erased_serde;
 extern crate error_chain;
 extern crate flate2;
 extern crate futures;
-extern crate http;
-extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -30,7 +28,6 @@ extern crate serde_derive;
 extern crate serde_mtproto;
 #[macro_use]
 extern crate serde_mtproto_derive;
-extern crate tokio_executor;
 extern crate tokio_io;
 extern crate tokio_tcp;
 extern crate toml;

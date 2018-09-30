@@ -12,7 +12,7 @@ use tokio_io;
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{SERVER_ADDRS, Connection};
+use ::network::connection::common::{self, SERVER_ADDRS, Connection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
@@ -72,7 +72,7 @@ impl ConnectionTcpFull {
 
             prepare_send_data::<T, M>(&state, request_message, &mut sent_counter)
                 .into_future()
-                .and_then(|data| tcp_common::perform_send(socket, data))
+                .and_then(|data| common::perform_send(socket, data))
                 .map(move |socket| (Self { socket, sent_counter }, state))
         })
     }

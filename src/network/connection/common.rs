@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use futures::Future;
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
+use tokio_io;
+use tokio_tcp::TcpStream;
 
 use ::error;
 use ::tl::TLObject;
@@ -29,4 +31,16 @@ pub trait Connection: Send + Sized + 'static {
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
+}
+
+
+pub(super) fn perform_send(socket: TcpStream, message_bytes: Vec<u8>)
+    -> impl Future<Item = TcpStream, Error = error::Error>
+{
+    tokio_io::io::write_all(socket, message_bytes).map(|(socket, sent_bytes)| {
+        debug!("Sent {} bytes to server: socket = {:?}, bytes = {:?}",
+            sent_bytes.len(), socket, sent_bytes);
+
+        socket
+    }).map_err(Into::into)
 }

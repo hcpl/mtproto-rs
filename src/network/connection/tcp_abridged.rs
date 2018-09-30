@@ -12,7 +12,7 @@ use tokio_io;
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{SERVER_ADDRS, Connection};
+use ::network::connection::common::{self, SERVER_ADDRS, Connection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
@@ -71,7 +71,7 @@ impl ConnectionTcpAbridged {
 
             prepare_send_data::<T, M>(&state, request_message, &mut is_first_request)
                 .into_future()
-                .and_then(|data| tcp_common::perform_send(socket, data))
+                .and_then(|data| common::perform_send(socket, data))
                 .map(move |socket| (Self { socket, is_first_request }, state))
         })
     }
@@ -169,12 +169,12 @@ fn perform_recv(socket: TcpStream)
     -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
 {
     tokio_io::io::read_exact(socket, [0; 1]).and_then(|(socket, byte_id)| {
-        debug!("Received {} bytes to server: socket = {:?}, bytes = {:?}",
+        debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
             byte_id.len(), socket, byte_id);
 
         if byte_id == [0x7f] {
             Either::A(tokio_io::io::read_exact(socket, [0; 3]).map(|(socket, bytes_len)| {
-                debug!("Received {} bytes to server: socket = {:?}, bytes = {:?}",
+                debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
                     bytes_len.len(), socket, bytes_len);
 
                 let len = LittleEndian::read_uint(&bytes_len, 3) as usize * 4;

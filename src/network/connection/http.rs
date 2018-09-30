@@ -1,26 +1,26 @@
 use std::fmt;
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::str;
 
-use futures::{Future, IntoFuture, Stream};
-use hyper::{self, client};
+use futures::{self, Future, IntoFuture, Stream};
 use select::document::Document;
 use select::predicate::Name;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
-use tokio_executor;
+use tokio_io;
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{SERVER_ADDRS, Connection};
+use ::network::connection::common::{self, SERVER_ADDRS, Connection};
 use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageSeedCommon};
 
 
 pub struct ConnectionHttp {
-    send_request: client::conn::SendRequest<hyper::Body>,
+    socket: TcpStream,
 }
 
 impl ConnectionHttp {
@@ -29,14 +29,8 @@ impl ConnectionHttp {
     {
         info!("New HTTP connection to {}", server_addr);
 
-        TcpStream::connect(&server_addr).map_err(Into::into).and_then(|socket| {
-            client::conn::Builder::new().handshake(socket).map_err(Into::into)
-        }).map(|(send_request, conn)| {
-            tokio_executor::spawn(conn.map_err(|e| {
-                error!("client connection error: {}", e);
-            }));
-
-            Self { send_request }
+        TcpStream::connect(&server_addr).map_err(Into::into).map(move |socket| {
+            Self { socket }
         })
     }
 
@@ -46,43 +40,104 @@ impl ConnectionHttp {
         Self::connect(SERVER_ADDRS[0])
     }
 
+    pub fn send_plain<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, MessagePlain<T>>(state, send_data)
+    }
+
+    pub fn send<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, Message<T>>(state, send_data)
+    }
+
+    fn impl_send<T, M>(self, mut state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        M: MessageCommon<T>,
+    {
+        state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
+
+            let Self { socket } = self;
+
+            prepare_send_data::<T, M>(&state, request_message)
+                .into_future()
+                .and_then(|data| common::perform_send(socket, data))
+                .map(move |socket| (Self { socket }, state))
+        })
+    }
+
+    pub fn recv_plain<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, MessagePlain<U>>(state)
+    }
+
+    pub fn recv<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, Message<U>>(state)
+    }
+
+    fn impl_recv<U, N>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+        N: MessageCommon<U>,
+    {
+        let Self { socket } = self;
+
+        perform_recv(socket).and_then(move |(socket, data)| {
+            parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+                debug!("Received message: {:#?}", msg);
+
+                let conn = Self { socket };
+                let response = msg.into_body();
+
+                (conn, state, response)
+            })
+        })
+    }
+
     pub fn request_plain<T, U>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data)
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data)
     }
 
-    fn impl_request<T, U, M, N>(mut self, mut state: State, request_data: T)
+    fn impl_request<T, U, M, N>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
-              M: MessageCommon<T>,
-              N: MessageCommon<U> + 'static,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+        M: MessageCommon<T>,
+        N: MessageCommon<U> + 'static,
     {
-        state.create_message::<T, M>(request_data).and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
-            create_http_request(&state, request_message)
-        }).into_future().and_then(|http_request| {
-            debug!("HTTP request: {:?}", http_request);
-
-            self.send_request.send_request(http_request)
-                .and_then(|res| res.into_body().concat2())
-                .map_err(|err| err.into())
-                .and_then(|response_bytes| {
-                    parse_response::<U, N>(&state, &response_bytes)
-                        .into_future()
-                        .map(move |msg| (self, state, msg.into_body()))
-                })
+        self.impl_send::<T, M>(state, request_data).and_then(|(conn, state)| {
+            conn.impl_recv::<U, N>(state)
         })
     }
 }
@@ -90,38 +145,74 @@ impl ConnectionHttp {
 impl Connection for ConnectionHttp {
     fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request_plain(state, request_data))
     }
 
     fn request<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request(state, request_data))
     }
 }
 
 
-fn create_http_request<T, M>(state: &State, request_message: M)
-    -> error::Result<hyper::Request<hyper::Body>>
-    where T: fmt::Debug + Serialize + TLObject,
-          M: MessageCommon<T>,
+fn perform_recv(socket: TcpStream)
+    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
 {
-    let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
-    let serialized_message = serde_mtproto::to_bytes(&raw_message)?;
+    let lines = tokio_io::io::lines(BufReader::new(socket));
 
-    // Here we do mean to unwrap since it should fail if something goes wrong anyway
-    assert_eq!(raw_message.size_hint().unwrap(), serialized_message.len());
+    futures::future::loop_fn(lines, |lines| {
+        lines.into_future().map(|(line, lines)| {
+            match line {
+                Some(line) => {
+                    if line.starts_with("Content-length: ") {
+                        let len = line[16..].parse::<usize>().unwrap();
+                        return futures::future::Loop::Break((lines, len));
+                    }
 
-    hyper::Request::post("/api")
-        .header(hyper::header::CONNECTION, "keep-alive")
-        .header(hyper::header::CONTENT_LENGTH, serialized_message.len())
-        .body(serialized_message.into())
-        .map_err(Into::into)
+                    futures::future::Loop::Continue(lines)
+                },
+                None => panic!("HTTP response should not end here!"),  // FIXME
+            }
+        })
+    }).and_then(|(lines, len)| {
+        lines.into_future().map(move |(line, lines)| {
+            (line, lines, len)
+        })
+    }).map_err(|(e, _)| e).and_then(|(line, lines, len)| {
+        assert_eq!(line.unwrap(), "");
+
+        tokio_io::io::read_exact(lines.into_inner(), vec![0; len]).map(|(buf_socket, body)| {
+            (buf_socket.into_inner(), body)
+        })
+    }).map_err(Into::into)
+}
+
+fn prepare_send_data<T, M>(state: &State, message: M)
+    -> error::Result<Vec<u8>>
+where
+    T: fmt::Debug + Serialize + TLObject,
+    M: MessageCommon<T>,
+{
+    let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
+
+    let mut send_bytes = format!("\
+        POST /api HTTP/1.1\r\n\
+        Connection: keep-alive\r\n\
+        Content-Length: {}\r\n\
+        \r\n\
+    ", raw_message.size_hint()?).into_bytes();
+
+    serde_mtproto::to_writer(&mut send_bytes, &raw_message)?;
+
+    Ok(send_bytes)
 }
 
 fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N>
