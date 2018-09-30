@@ -8,7 +8,7 @@ use futures::{Future, IntoFuture};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto::{self, MtProtoSized};
-use tokio_io;
+use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
@@ -166,23 +166,122 @@ impl Connection for ConnectionTcpFull {
 }
 
 
-fn perform_recv(socket: TcpStream)
-    -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
+#[derive(Debug)]
+pub struct SendConnectionTcpFull {
+    send_socket: tokio_io::io::WriteHalf<TcpStream>,
+    sent_counter: u32,
+}
+
+#[derive(Debug)]
+pub struct RecvConnectionTcpFull {
+    recv_socket: tokio_io::io::ReadHalf<TcpStream>,
+}
+
+impl ConnectionTcpFull {
+    pub fn split(self) -> (SendConnectionTcpFull, RecvConnectionTcpFull) {
+        let Self { socket, sent_counter } = self;
+        let (recv_socket, send_socket) = socket.split();
+
+        (
+            SendConnectionTcpFull { send_socket, sent_counter },
+            RecvConnectionTcpFull { recv_socket },
+        )
+    }
+}
+
+impl SendConnectionTcpFull {
+    pub fn send_plain<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, MessagePlain<T>>(state, send_data)
+    }
+
+    pub fn send<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, Message<T>>(state, send_data)
+    }
+
+    fn impl_send<T, M>(self, mut state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        M: MessageCommon<T>,
+    {
+        state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
+
+            let Self { send_socket, mut sent_counter } = self;
+
+            prepare_send_data::<T, M>(&state, request_message, &mut sent_counter)
+                .into_future()
+                .and_then(|data| common::perform_send(send_socket, data))
+                .map(move |send_socket| (Self { send_socket, sent_counter }, state))
+        })
+    }
+}
+
+impl RecvConnectionTcpFull {
+    pub fn recv_plain<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, MessagePlain<U>>(state)
+    }
+
+    pub fn recv<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, Message<U>>(state)
+    }
+
+    fn impl_recv<U, N>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+        N: MessageCommon<U>,
+    {
+        let Self { recv_socket } = self;
+
+        perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
+            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+                debug!("Received message: {:#?}", msg);
+
+                let conn = Self { recv_socket };
+                let response = msg.into_body();
+
+                (conn, state, response)
+            })
+        })
+    }
+}
+
+
+fn perform_recv<R>(recv: R) -> impl Future<Item = (R, Vec<u8>), Error = error::Error>
+where
+    R: fmt::Debug + AsyncRead,
 {
-    tokio_io::io::read_exact(socket, [0; 8]).map_err(Into::into).and_then(|(socket, first_bytes)| {
-        debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
-            first_bytes.len(), socket, first_bytes);
+    tokio_io::io::read_exact(recv, [0; 8]).map_err(Into::into).and_then(|(recv, first_bytes)| {
+        debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
+            first_bytes.len(), recv, first_bytes);
 
         let len = LittleEndian::read_u32(&first_bytes[0..4]);
         let ulen = len as usize;  // FIXME: use safe cast here
         // TODO: check seq_no
         let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-        tokio_io::io::read_exact(socket, vec![0; ulen - 8])
+        tokio_io::io::read_exact(recv, vec![0; ulen - 8])
             .map_err(Into::into)
-            .and_then(move |(socket, last_bytes)| {
-                debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
-                    last_bytes.len(), socket, last_bytes);
+            .and_then(move |(recv, last_bytes)| {
+                debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
+                    last_bytes.len(), recv, last_bytes);
 
                 let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
                 let mut body = last_bytes;
@@ -194,7 +293,7 @@ fn perform_recv(socket: TcpStream)
                 value = crc32::update(value, &crc32::IEEE_TABLE, &body);
 
                 if value == checksum {
-                    Ok((socket, body))
+                    Ok((recv, body))
                 } else {
                     bail!(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum))
                 }
