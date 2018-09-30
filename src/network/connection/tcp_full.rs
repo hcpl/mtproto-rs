@@ -33,7 +33,7 @@ impl ConnectionTcpFull {
         info!("New TCP connection in full mode to {}", server_addr);
 
         TcpStream::connect(&server_addr).map_err(Into::into).map(|socket| {
-            ConnectionTcpFull { socket, sent_counter: 0 }
+            Self { socket, sent_counter: 0 }
         })
     }
 
@@ -43,45 +43,104 @@ impl ConnectionTcpFull {
         Self::connect(SERVER_ADDRS[0])
     }
 
+    pub fn send_plain<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, MessagePlain<T>>(state, send_data)
+    }
+
+    pub fn send<T>(self, state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        self.impl_send::<T, Message<T>>(state, send_data)
+    }
+
+    fn impl_send<T, M>(self, mut state: State, send_data: T)
+        -> impl Future<Item = (Self, State), Error = error::Error>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        M: MessageCommon<T>,
+    {
+        state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
+            debug!("Message to send: {:#?}", request_message);
+
+            let Self { socket, mut sent_counter } = self;
+
+            prepare_send_data::<T, M>(&state, request_message, &mut sent_counter)
+                .into_future()
+                .and_then(|data| tcp_common::perform_send(socket, data))
+                .map(move |socket| (Self { socket, sent_counter }, state))
+        })
+    }
+
+    pub fn recv_plain<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, MessagePlain<U>>(state)
+    }
+
+    pub fn recv<U>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        self.impl_recv::<U, Message<U>>(state)
+    }
+
+    fn impl_recv<U, N>(self, state: State)
+        -> impl Future<Item = (Self, State, U), Error = error::Error>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+        N: MessageCommon<U>,
+    {
+        let Self { socket, sent_counter } = self;
+
+        perform_recv(socket).and_then(move |(socket, data)| {
+            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+                debug!("Received message: {:#?}", msg);
+
+                let conn = Self { socket, sent_counter };
+                let response = msg.into_body();
+
+                (conn, state, response)
+            })
+        })
+    }
+
     pub fn request_plain<T, U>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data)
     }
 
     pub fn request<T, U>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data)
     }
 
-    fn impl_request<T, U, M, N>(self, mut state: State, request_data: T)
+    fn impl_request<T, U, M, N>(self, state: State, request_data: T)
         -> impl Future<Item = (Self, State, U), Error = error::Error>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
-              M: MessageCommon<T>,
-              N: MessageCommon<U> + 'static,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+        M: MessageCommon<T>,
+        N: MessageCommon<U> + 'static,
     {
-        state.create_message::<T, M>(request_data).into_future().and_then(|request_message| {
-            debug!("Message to send: {:#?}", request_message);
-
-            let Self { socket, mut sent_counter } = self;
-            let request_future = perform_request(&state, socket, request_message, &mut sent_counter);
-
-            request_future.and_then(move |(socket, response_bytes)| {
-                tcp_common::parse_response::<U, N>(&mut state, &response_bytes)
-                    .into_future()
-                    .map(move |msg| {
-                        let conn = Self { socket, sent_counter };
-                        let response = msg.into_body();
-
-                        (conn, state, response)
-                    })
-            })
+        self.impl_send::<T, M>(state, request_data).and_then(|(conn, state)| {
+            conn.impl_recv::<U, N>(state)
         })
     }
 }
@@ -89,63 +148,64 @@ impl ConnectionTcpFull {
 impl Connection for ConnectionTcpFull {
     fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request_plain(state, request_data))
     }
 
     fn request<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
-        where T: fmt::Debug + Serialize + TLObject + Send,
-              U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request(state, request_data))
     }
 }
 
 
-fn perform_request<T, M>(state: &State, socket: TcpStream, message: M, sent_counter: &mut u32)
+fn perform_recv(socket: TcpStream)
     -> impl Future<Item = (TcpStream, Vec<u8>), Error = error::Error>
-where T: fmt::Debug + Serialize + TLObject,
-      M: MessageCommon<T>,
 {
-    prepare_data(state, message, sent_counter).into_future().and_then(|data| {
-        let request = tokio_io::io::write_all(socket, data);
+    tokio_io::io::read_exact(socket, [0; 8]).map_err(Into::into).and_then(|(socket, first_bytes)| {
+        debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
+            first_bytes.len(), socket, first_bytes);
 
-        request.and_then(|(socket, _request_bytes)| {
-            tokio_io::io::read_exact(socket, [0; 8])
-        }).map_err(Into::into).and_then(|(socket, first_bytes)| {
-            let len = LittleEndian::read_u32(&first_bytes[0..4]);
-            let ulen = len as usize;  // FIXME: use safe cast here
-            // TODO: check seq_no
-            let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
+        let len = LittleEndian::read_u32(&first_bytes[0..4]);
+        let ulen = len as usize;  // FIXME: use safe cast here
+        // TODO: check seq_no
+        let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-            tokio_io::io::read_exact(socket, vec![0; ulen - 8])
-                .map_err(Into::into)
-                .and_then(move |(socket, last_bytes)| {
-                    let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
-                    let mut body = last_bytes;
-                    body.truncate(ulen - 12);
+        tokio_io::io::read_exact(socket, vec![0; ulen - 8])
+            .map_err(Into::into)
+            .and_then(move |(socket, last_bytes)| {
+                debug!("Received {} bytes from server: socket = {:?}, bytes = {:?}",
+                    last_bytes.len(), socket, last_bytes);
 
-                    let mut value = 0;
-                    value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[0..4]);
-                    value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
-                    value = crc32::update(value, &crc32::IEEE_TABLE, &body);
+                let checksum = LittleEndian::read_u32(&last_bytes[ulen - 12..ulen - 8]);
+                let mut body = last_bytes;
+                body.truncate(ulen - 12);
 
-                    if value == checksum {
-                        Ok((socket, body))
-                    } else {
-                        bail!(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum))
-                    }
-                })
-        })
+                let mut value = 0;
+                value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[0..4]);
+                value = crc32::update(value, &crc32::IEEE_TABLE, &first_bytes[4..8]);
+                value = crc32::update(value, &crc32::IEEE_TABLE, &body);
+
+                if value == checksum {
+                    Ok((socket, body))
+                } else {
+                    bail!(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum))
+                }
+            })
     })
 }
 
-fn prepare_data<T, M>(state: &State, message: M, sent_counter: &mut u32) -> error::Result<Vec<u8>>
-where T: fmt::Debug + Serialize + TLObject,
-      M: MessageCommon<T>,
+fn prepare_send_data<T, M>(state: &State, message: M, sent_counter: &mut u32) -> error::Result<Vec<u8>>
+where
+    T: fmt::Debug + Serialize + TLObject,
+    M: MessageCommon<T>,
 {
     let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
 

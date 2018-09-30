@@ -42,7 +42,7 @@ fn processed_auth<C, F>(conn_fut: F, tag: &'static str)
         println!("Success ({}): state = {:?}", tag, state);
     }).map_err(move |e| {
         println!("{} ({})", e, tag);
-        info!("{:?}", e);
+        error!("{:?}", e);
     }))
 }
 

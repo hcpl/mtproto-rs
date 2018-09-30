@@ -36,7 +36,7 @@ impl ConnectionHttp {
                 error!("client connection error: {}", e);
             }));
 
-            ConnectionHttp { send_request }
+            Self { send_request }
         })
     }
 
