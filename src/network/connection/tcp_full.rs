@@ -7,16 +7,16 @@ use crc::crc32;
 use futures::{Future, IntoFuture};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
-use serde_mtproto::{self, MtProtoSized};
+use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{self, SERVER_ADDRS, Connection};
+use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
 use ::utils::safe_uint_cast;
 
 
@@ -70,7 +70,9 @@ impl ConnectionTcpFull {
 
             let Self { socket, mut sent_counter } = self;
 
-            prepare_send_data::<T, M>(&state, request_message, &mut sent_counter)
+            request_message
+                .to_raw(state.auth_raw_key(), state.version)
+                .and_then(|raw_message| prepare_send_data(raw_message, &mut sent_counter))
                 .into_future()
                 .and_then(|data| common::perform_send(socket, data))
                 .map(move |socket| (Self { socket, sent_counter }, state))
@@ -102,7 +104,9 @@ impl ConnectionTcpFull {
         let Self { socket, sent_counter } = self;
 
         perform_recv(socket).and_then(move |(socket, data)| {
-            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+            tcp_common::parse_response::<N::Raw>(&data).and_then(|raw_message| {
+                common::from_raw::<U, N>(&raw_message, &state)
+            }).map(move |msg| {
                 debug!("Received message: {:?}", msg);
 
                 let conn = Self { socket, sent_counter };
@@ -146,6 +150,9 @@ impl ConnectionTcpFull {
 }
 
 impl Connection for ConnectionTcpFull {
+    type SendConnection = SendConnectionTcpFull;
+    type RecvConnection = RecvConnectionTcpFull;
+
     fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
     where
@@ -162,6 +169,10 @@ impl Connection for ConnectionTcpFull {
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request(state, request_data))
+    }
+
+    fn split(self) -> (Self::SendConnection, Self::RecvConnection) {
+        self.split()
     }
 }
 
@@ -217,7 +228,9 @@ impl SendConnectionTcpFull {
 
             let Self { send_socket, mut sent_counter } = self;
 
-            prepare_send_data::<T, M>(&state, request_message, &mut sent_counter)
+            request_message
+                .to_raw(state.auth_raw_key(), state.version)
+                .and_then(|raw_message| prepare_send_data(raw_message, &mut sent_counter))
                 .into_future()
                 .and_then(|data| common::perform_send(send_socket, data))
                 .map(move |send_socket| (Self { send_socket, sent_counter }, state))
@@ -251,7 +264,9 @@ impl RecvConnectionTcpFull {
         let Self { recv_socket } = self;
 
         perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
-            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+            tcp_common::parse_response::<N::Raw>(&data).and_then(|raw_message| {
+                common::from_raw::<U, N>(&raw_message, &state)
+            }).map(move |msg| {
                 debug!("Received message: {:?}", msg);
 
                 let conn = Self { recv_socket };
@@ -260,6 +275,42 @@ impl RecvConnectionTcpFull {
                 (conn, state, response)
             })
         })
+    }
+}
+
+impl SendConnection for SendConnectionTcpFull {
+    fn send_plain<T>(self, state: State, send_data: T)
+        -> Box<Future<Item = (Self, State), Error = error::Error> + Send>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        Box::new(self.send_plain(state, send_data))
+    }
+
+    fn send<T>(self, state: State, send_data: T)
+        -> Box<Future<Item = (Self, State), Error = error::Error> + Send>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        Box::new(self.send(state, send_data))
+    }
+}
+
+impl RecvConnection for RecvConnectionTcpFull {
+    fn recv_plain<U>(self, state: State)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        Box::new(self.recv_plain(state))
+    }
+
+    fn recv<U>(self, state: State)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        Box::new(self.recv(state))
     }
 }
 
@@ -301,13 +352,10 @@ where
     })
 }
 
-fn prepare_send_data<T, M>(state: &State, message: M, sent_counter: &mut u32) -> error::Result<Vec<u8>>
+fn prepare_send_data<R>(raw_message: R, sent_counter: &mut u32) -> error::Result<Vec<u8>>
 where
-    T: fmt::Debug + Serialize + TLObject,
-    M: MessageCommon<T>,
+    R: RawMessageCommon,
 {
-    let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
-
     const SIZE_SIZE: usize = mem::size_of::<u32>();
     const SENT_COUNTER_SIZE: usize = mem::size_of::<u32>();
     let raw_message_size = raw_message.size_hint()?;

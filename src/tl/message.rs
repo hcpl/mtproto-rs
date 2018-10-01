@@ -54,13 +54,13 @@ impl<T: Serialize + Identifiable + MtProtoSized> MessagePlain<T> {
 }
 
 impl<T: fmt::Debug + DeserializeOwned + Identifiable + MtProtoSized> MessagePlain<T> {
-    pub fn from_raw(raw: RawMessagePlain, enum_variant_ids: &[&'static str]) -> error::Result<Self> {
+    pub fn from_raw(raw: &RawMessagePlain, enum_variant_ids: &[&'static str]) -> error::Result<Self> {
         let RawMessagePlain {
             auth_key_id,
             message_id,
             message_data_len,
-            message_data,
-        } = raw;
+            ref message_data,
+        } = *raw;
 
         if auth_key_id != 0 {
             // FIXME: return a non-zero plain message auth key id error
@@ -157,15 +157,15 @@ impl<T: Serialize + Identifiable + MtProtoSized> Message<T> {
 
 impl<T: DeserializeOwned + Identifiable + MtProtoSized> Message<T> {
     pub fn from_raw(
-        raw: RawMessage,
+        raw: &RawMessage,
         raw_key: &[u8; 256],
         version: ProtocolVersion,
     ) -> error::Result<Self> {
-        let data_serialized = unpack_message(raw, raw_key, version)?;
+        let data_serialized = unpack_message(&raw, raw_key, version)?;
 
         let data_seed = RawMessageDataSeed { version };
         let data_raw = serde_mtproto::from_bytes_seed(data_seed, &data_serialized, &[])?;
-        let data = MessageData::from_raw(data_raw, version)?;
+        let data = MessageData::from_raw(&data_raw, version)?;
 
         Ok(Self { data })
     }
@@ -309,16 +309,16 @@ impl <T: Serialize + Identifiable + MtProtoSized> MessageData<T> {
 }
 
 impl<T: DeserializeOwned + Identifiable + MtProtoSized> MessageData<T> {
-    pub fn from_raw(raw: RawMessageData, version: ProtocolVersion) -> error::Result<Self> {
+    pub fn from_raw(raw: &RawMessageData, version: ProtocolVersion) -> error::Result<Self> {
         let RawMessageData {
             salt,
             session_id,
             message_id,
             seq_no,
             message_data_len,
-            message_data,
-            padding,
-        } = raw;
+            ref message_data,
+            ref padding,
+        } = *raw;
 
         check_padding_size(padding.inner().len(), version)?;
         // TODO: check validity of `salt`, `session_id`, `message_id` and `seq_no`
@@ -479,7 +479,7 @@ fn pack_message_v2(data_serialized: &[u8], raw_key: &[u8; 256]) -> error::Result
 
 
 fn unpack_message(
-    raw_msg: RawMessage,
+    raw_msg: &RawMessage,
     raw_key: &[u8; 256],
     version: ProtocolVersion,
 ) -> error::Result<Vec<u8>> {
@@ -489,8 +489,8 @@ fn unpack_message(
     }
 }
 
-fn unpack_message_v1(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<Vec<u8>> {
-    let RawMessage { auth_key_id, msg_key, encrypted_data } = raw_msg;
+fn unpack_message_v1(raw_msg: &RawMessage, raw_key: &[u8; 256]) -> error::Result<Vec<u8>> {
+    let RawMessage { auth_key_id, msg_key, ref encrypted_data } = *raw_msg;
 
     let raw_key_sha1 = sha1_from_bytes(&[raw_key])?;
     let auth_key_id_checked = LittleEndian::read_i64(array_ref!(raw_key_sha1, 12, 8));
@@ -514,8 +514,8 @@ fn unpack_message_v1(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<
     Ok(data_serialized)
 }
 
-fn unpack_message_v2(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<Vec<u8>> {
-    let RawMessage { auth_key_id, msg_key, encrypted_data } = raw_msg;
+fn unpack_message_v2(raw_msg: &RawMessage, raw_key: &[u8; 256]) -> error::Result<Vec<u8>> {
+    let RawMessage { auth_key_id, msg_key, ref encrypted_data } = *raw_msg;
 
     let raw_key_sha1 = sha1_from_bytes(&[raw_key])?;
     let auth_key_id_checked = LittleEndian::read_i64(array_ref!(raw_key_sha1, 12, 8));
@@ -541,16 +541,15 @@ fn unpack_message_v2(raw_msg: RawMessage, raw_key: &[u8; 256]) -> error::Result<
 
 
 pub trait MessageCommon<T>: fmt::Debug + Sized + Send + private::MessageCommonSealed {
-    type Raw: fmt::Debug + Serialize + MtProtoSized;
+    type Raw: RawMessageCommon<Seed = Self::RawSeed>;
     type RawSeed: for<'de> RawMessageSeedCommon<'de, Value = Self::Raw>;
 
     fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self>;
     fn to_raw(&self, raw_key: Option<&[u8; 256]>, version: ProtocolVersion) -> error::Result<Self::Raw>
         where T: Serialize;
-    fn from_raw(raw: Self::Raw, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
+    fn from_raw(raw: &Self::Raw, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned;
     fn set_message_id(&mut self, message_id: i64);
-    fn encrypted_data_len(len: usize) -> Option<usize>;
     fn into_body(self) -> T;
 }
 
@@ -573,7 +572,7 @@ impl<T> MessageCommon<T> for MessagePlain<T>
         self.to_raw()
     }
 
-    fn from_raw(raw: RawMessagePlain, _raw_key: Option<&[u8; 256]>, _version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
+    fn from_raw(raw: &RawMessagePlain, _raw_key: Option<&[u8; 256]>, _version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned
     {
         // NOTE: `Self::from_raw` triggers rustc error E0061 --- probably
@@ -584,10 +583,6 @@ impl<T> MessageCommon<T> for MessagePlain<T>
 
     fn set_message_id(&mut self, message_id: i64) {
         self.message_id = message_id;
-    }
-
-    fn encrypted_data_len(_len: usize) -> Option<usize> {
-        None
     }
 
     fn into_body(self) -> T {
@@ -619,7 +614,7 @@ impl<T> MessageCommon<T> for Message<T>
         self.to_raw(raw_key.as_ref().unwrap(), version)  // FIXME
     }
 
-    fn from_raw(raw: RawMessage, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, _enum_variant_ids: &[&'static str]) -> error::Result<Self>
+    fn from_raw(raw: &RawMessage, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, _enum_variant_ids: &[&'static str]) -> error::Result<Self>
         where T: DeserializeOwned
     {
         Self::from_raw(raw, raw_key.as_ref().unwrap(), version)  // FIXME
@@ -629,12 +624,31 @@ impl<T> MessageCommon<T> for Message<T>
         self.data.message_id = message_id;
     }
 
-    fn encrypted_data_len(len: usize) -> Option<usize> {
-        Some(len - 24)
-    }
-
     fn into_body(self) -> T {
         self.data.body.into_inner().into_inner()
+    }
+}
+
+
+pub trait RawMessageCommon: fmt::Debug + Serialize + MtProtoSized + private::RawMessageCommonSealed {
+    type Seed: for<'de> RawMessageSeedCommon<'de, Value = Self>;
+
+    fn encrypted_data_len(len: usize) -> Option<usize>;
+}
+
+impl RawMessageCommon for RawMessagePlain {
+    type Seed = PhantomData<RawMessagePlain>;
+
+    fn encrypted_data_len(_len: usize) -> Option<usize> {
+        None
+    }
+}
+
+impl RawMessageCommon for RawMessage {
+    type Seed = RawMessageSeed;
+
+    fn encrypted_data_len(len: usize) -> Option<usize> {
+        Some(len - 24)
     }
 }
 
@@ -664,6 +678,12 @@ mod private {
 
     impl<T> MessageCommonSealed for MessagePlain<T> {}
     impl<T> MessageCommonSealed for Message<T> {}
+
+
+    pub trait RawMessageCommonSealed {}
+
+    impl RawMessageCommonSealed for RawMessagePlain {}
+    impl RawMessageCommonSealed for RawMessage {}
 
 
     pub trait RawMessageSeedCommonSealed {}
@@ -701,7 +721,7 @@ mod tests {
 
         assert_eq!(raw_msg_plain, raw_msg_plain2);
 
-        let msg_plain2 = MessagePlain::from_raw(raw_msg_plain, &[]).unwrap();
+        let msg_plain2 = MessagePlain::from_raw(&raw_msg_plain, &[]).unwrap();
 
         assert_eq!(msg_plain, msg_plain2);
     }
@@ -785,7 +805,7 @@ mod tests {
             assert_eq!(raw_msg_data, raw_msg_data_deserialized);
 
             let msg_data_deserialized =
-                MessageData::from_raw(raw_msg_data_deserialized, version).unwrap();
+                MessageData::from_raw(&raw_msg_data_deserialized, version).unwrap();
 
             assert_eq!(msg_data, &msg_data_deserialized);
         }

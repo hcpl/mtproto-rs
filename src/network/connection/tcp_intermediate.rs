@@ -6,16 +6,16 @@ use byteorder::{ByteOrder, LittleEndian};
 use futures::{Future, IntoFuture};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
-use serde_mtproto::{self, MtProtoSized};
+use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{self, SERVER_ADDRS, Connection};
+use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
 use ::network::connection::tcp_common;
 use ::network::state::State;
 use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain};
+use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
 use ::utils::safe_uint_cast;
 
 
@@ -69,7 +69,9 @@ impl ConnectionTcpIntermediate {
 
             let Self { socket, mut is_first_request } = self;
 
-            prepare_send_data::<T, M>(&state, request_message, &mut is_first_request)
+            request_message
+                .to_raw(state.auth_raw_key(), state.version)
+                .and_then(|raw_message| prepare_send_data(raw_message, &mut is_first_request))
                 .into_future()
                 .and_then(|data| common::perform_send(socket, data))
                 .map(move |socket| (Self { socket, is_first_request }, state))
@@ -101,7 +103,9 @@ impl ConnectionTcpIntermediate {
         let Self { socket, is_first_request } = self;
 
         perform_recv(socket).and_then(move |(socket, data)| {
-            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+            tcp_common::parse_response::<N::Raw>(&data).and_then(|raw_message| {
+                common::from_raw::<U, N>(&raw_message, &state)
+            }).map(move |msg| {
                 debug!("Received message: {:?}", msg);
 
                 let conn = Self { socket, is_first_request };
@@ -145,6 +149,9 @@ impl ConnectionTcpIntermediate {
 }
 
 impl Connection for ConnectionTcpIntermediate {
+    type SendConnection = SendConnectionTcpIntermediate;
+    type RecvConnection = RecvConnectionTcpIntermediate;
+
     fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
     where
@@ -161,6 +168,10 @@ impl Connection for ConnectionTcpIntermediate {
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.request(state, request_data))
+    }
+
+    fn split(self) -> (Self::SendConnection, Self::RecvConnection) {
+        self.split()
     }
 }
 
@@ -216,7 +227,9 @@ impl SendConnectionTcpIntermediate {
 
             let Self { send_socket, mut is_first_request } = self;
 
-            prepare_send_data::<T, M>(&state, request_message, &mut is_first_request)
+            request_message
+                .to_raw(state.auth_raw_key(), state.version)
+                .and_then(|raw_message| prepare_send_data(raw_message, &mut is_first_request))
                 .into_future()
                 .and_then(|data| common::perform_send(send_socket, data))
                 .map(move |send_socket| (Self { send_socket, is_first_request }, state))
@@ -250,7 +263,9 @@ impl RecvConnectionTcpIntermediate {
         let Self { recv_socket } = self;
 
         perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
-            tcp_common::parse_response::<U, N>(&state, &data).into_future().map(move |msg| {
+            tcp_common::parse_response::<N::Raw>(&data).and_then(|raw_message| {
+                common::from_raw::<U, N>(&raw_message, &state)
+            }).map(move |msg| {
                 debug!("Received message: {:?}", msg);
 
                 let conn = Self { recv_socket };
@@ -259,6 +274,42 @@ impl RecvConnectionTcpIntermediate {
                 (conn, state, response)
             })
         })
+    }
+}
+
+impl SendConnection for SendConnectionTcpIntermediate {
+    fn send_plain<T>(self, state: State, send_data: T)
+        -> Box<Future<Item = (Self, State), Error = error::Error> + Send>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        Box::new(self.send_plain(state, send_data))
+    }
+
+    fn send<T>(self, state: State, send_data: T)
+        -> Box<Future<Item = (Self, State), Error = error::Error> + Send>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        Box::new(self.send(state, send_data))
+    }
+}
+
+impl RecvConnection for RecvConnectionTcpIntermediate {
+    fn recv_plain<U>(self, state: State)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        Box::new(self.recv_plain(state))
+    }
+
+    fn recv<U>(self, state: State)
+        -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
+    where
+        U: fmt::Debug + DeserializeOwned + TLObject + Send,
+    {
+        Box::new(self.recv(state))
     }
 }
 
@@ -276,13 +327,10 @@ where
     }).map_err(Into::into)
 }
 
-fn prepare_send_data<T, M>(state: &State, message: M, is_first_request: &mut bool)
-    -> error::Result<Vec<u8>>
+fn prepare_send_data<R>(raw_message: R, is_first_request: &mut bool) -> error::Result<Vec<u8>>
 where
-    T: fmt::Debug + Serialize + TLObject,
-    M: MessageCommon<T>,
+    R: RawMessageCommon,
 {
-    let raw_message = message.to_raw(state.auth_raw_key(), state.version)?;
     let data_size = raw_message.size_hint()?;
 
     let init: &[u8] = if mem::replace(is_first_request, false) {

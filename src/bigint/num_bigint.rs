@@ -17,7 +17,7 @@ pub(crate) fn calc_g_pows_bytes(
     // TODO: check that `g` is a quadratic residue modulo `p`
 
     let g = BigUint::new(vec![g as u32]);
-    let b = gen_biguint_with_msb_one();
+    let b = gen_biguint_with_msb_one();  // FIXME: Make 2 leading ones for generated numbers
     assert_eq!(b.bits(), BITS);
     let dh_prime = BigUint::from_bytes_be(dh_prime);
     let g_b = BigUint::modpow(&g, &b, &dh_prime).to_bytes_be();

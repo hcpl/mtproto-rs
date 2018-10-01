@@ -1,19 +1,13 @@
-use std::fmt;
-
 use byteorder::{ByteOrder, LittleEndian};
-use serde::de::DeserializeOwned;
 use serde_mtproto;
 
 use ::error::{self, ErrorKind};
-use ::tl::TLObject;
-use ::tl::message::{MessageCommon, RawMessageSeedCommon};
-use ::network::state::State;
+use ::tl::message::{RawMessageCommon, RawMessageSeedCommon};
 
 
-pub(super) fn parse_response<U, N>(state: &State, response_bytes: &[u8]) -> error::Result<N>
+pub(super) fn parse_response<S>(response_bytes: &[u8]) -> error::Result<S>
 where
-    U: fmt::Debug + DeserializeOwned + TLObject,
-    N: MessageCommon<U>,
+    S: RawMessageCommon,
 {
     debug!("Response bytes: len = {} --- {:?}", response_bytes.len(), response_bytes);
 
@@ -27,26 +21,8 @@ where
         bail!(ErrorKind::BadTcpMessage(len));
     }
 
-    let encrypted_data_len = N::encrypted_data_len(len);
+    let encrypted_data_len = S::encrypted_data_len(len);
+    let seed = S::Seed::new(encrypted_data_len);
 
-    macro_rules! deserialize_response {
-        ($vnames:expr) => {{
-            serde_mtproto::from_bytes_seed(N::RawSeed::new(encrypted_data_len), response_bytes, $vnames)
-                .map_err(Into::into)
-                .and_then(|raw| N::from_raw(raw, state.auth_raw_key(), state.version, $vnames))
-        }};
-    }
-
-    if let Some(variant_names) = U::all_enum_variant_names() {
-        // FIXME: Lossy error management
-        for vname in variant_names {
-            if let Ok(msg) = deserialize_response!(&[vname]) {
-                return Ok(msg);
-            }
-        }
-
-        bail!(ErrorKind::BadTcpMessage(len))
-    } else {
-        deserialize_response!(&[])
-    }
+    serde_mtproto::from_bytes_seed(seed, response_bytes, &[]).map_err(Into::into)
 }
