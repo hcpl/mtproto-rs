@@ -9,7 +9,7 @@ use tokio_io::{self, AsyncWrite};
 
 use ::error::{self, ErrorKind};
 use ::tl::TLObject;
-use ::tl::message::MessageCommon;
+use ::tl::message::{MessageCommon, RawMessageCommon};
 use ::network::state::State;
 
 
@@ -49,6 +49,10 @@ pub trait SendConnection: Send + Sized + 'static {
         -> Box<Future<Item = (Self, State), Error = error::Error> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send;
+
+    fn send_raw<R>(self, raw_message: R) -> Box<Future<Item = Self, Error = error::Error> + Send>
+    where
+        R: RawMessageCommon;
 }
 
 pub trait RecvConnection: Send + Sized + 'static {
@@ -61,6 +65,10 @@ pub trait RecvConnection: Send + Sized + 'static {
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
+
+    fn recv_raw<S>(self) -> Box<Future<Item = (Self, S), Error = error::Error> + Send>
+    where
+        S: RawMessageCommon;
 }
 
 

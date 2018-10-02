@@ -630,7 +630,9 @@ impl<T> MessageCommon<T> for Message<T>
 }
 
 
-pub trait RawMessageCommon: fmt::Debug + Serialize + MtProtoSized + private::RawMessageCommonSealed {
+pub trait RawMessageCommon:
+    fmt::Debug + Serialize + MtProtoSized + Send + 'static + private::RawMessageCommonSealed
+{
     type Seed: for<'de> RawMessageSeedCommon<'de, Value = Self>;
 
     fn encrypted_data_len(len: usize) -> Option<usize>;

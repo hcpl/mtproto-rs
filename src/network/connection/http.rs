@@ -63,15 +63,26 @@ impl ConnectionHttp {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
             debug!("Message to send: {:?}", request_message);
 
-            let Self { socket } = self;
-
             request_message
                 .to_raw(state.auth_raw_key(), state.version)
-                .and_then(|raw_message| prepare_send_data(raw_message))
                 .into_future()
-                .and_then(|data| common::perform_send(socket, data))
-                .map(move |socket| (Self { socket }, state))
+                .and_then(|raw_message| self.send_raw(raw_message))
+                .map(|conn| (conn, state))
         })
+    }
+
+    pub fn send_raw<R>(self, raw_message: R) -> impl Future<Item = Self, Error = error::Error>
+    where
+        R: RawMessageCommon,
+    {
+        debug!("Raw message to send: {:?}", raw_message);
+
+        let Self { socket } = self;
+
+        prepare_send_data(raw_message)
+            .into_future()
+            .and_then(|data| common::perform_send(socket, data))
+            .map(move |socket| Self { socket })
     }
 
     pub fn recv_plain<U>(self, state: State)
@@ -96,18 +107,24 @@ impl ConnectionHttp {
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
         N: MessageCommon<U>,
     {
+        self.recv_raw().and_then(|(conn, raw_message)| {
+            common::from_raw::<U, N>(&raw_message, &state).map(|message| {
+                debug!("Received message: {:?}", message);
+                (conn, state, message.into_body())
+            })
+        })
+    }
+
+    pub fn recv_raw<S>(self) -> impl Future<Item = (Self, S), Error = error::Error>
+    where
+        S: RawMessageCommon,
+    {
         let Self { socket } = self;
 
         perform_recv(socket).and_then(move |(socket, data)| {
-            parse_response::<N::Raw>(&data).and_then(|raw_message| {
-                common::from_raw::<U, N>(&raw_message, &state)
-            }).map(move |msg| {
-                debug!("Received message: {:?}", msg);
-
-                let conn = Self { socket };
-                let response = msg.into_body();
-
-                (conn, state, response)
+            parse_response::<S>(&data).map(move |raw_message| {
+                debug!("Received raw message: {:?}", raw_message);
+                (Self { socket }, raw_message)
             })
         })
     }
@@ -220,16 +237,28 @@ impl SendConnectionHttp {
         state.create_message::<T, M>(send_data).into_future().and_then(|request_message| {
             debug!("Message to send: {:?}", request_message);
 
-            let Self { send_socket } = self;
-
             request_message
                 .to_raw(state.auth_raw_key(), state.version)
-                .and_then(|raw_message| prepare_send_data(raw_message))
                 .into_future()
-                .and_then(|data| common::perform_send(send_socket, data))
-                .map(move |send_socket| (Self { send_socket }, state))
+                .and_then(|raw_message| self.send_raw(raw_message))
+                .map(|conn| (conn, state))
         })
     }
+
+    pub fn send_raw<R>(self, raw_message: R) -> impl Future<Item = Self, Error = error::Error>
+    where
+        R: RawMessageCommon,
+    {
+        debug!("Raw message to send: {:?}", raw_message);
+
+        let Self { send_socket } = self;
+
+        prepare_send_data(raw_message)
+            .into_future()
+            .and_then(|data| common::perform_send(send_socket, data))
+            .map(move |send_socket| Self { send_socket })
+    }
+
 }
 
 impl RecvConnectionHttp {
@@ -255,18 +284,24 @@ impl RecvConnectionHttp {
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
         N: MessageCommon<U>,
     {
+        self.recv_raw().and_then(|(conn, raw_message)| {
+            common::from_raw::<U, N>(&raw_message, &state).map(|message| {
+                debug!("Received message: {:?}", message);
+                (conn, state, message.into_body())
+            })
+        })
+    }
+
+    pub fn recv_raw<S>(self) -> impl Future<Item = (Self, S), Error = error::Error>
+    where
+        S: RawMessageCommon,
+    {
         let Self { recv_socket } = self;
 
         perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
-            parse_response::<N::Raw>(&data).and_then(|raw_message| {
-                common::from_raw::<U, N>(&raw_message, &state)
-            }).map(move |msg| {
-                debug!("Received message: {:?}", msg);
-
-                let conn = Self { recv_socket };
-                let response = msg.into_body();
-
-                (conn, state, response)
+            parse_response::<S>(&data).map(move |raw_message| {
+                debug!("Received raw message: {:?}", raw_message);
+                (Self { recv_socket }, raw_message)
             })
         })
     }
@@ -288,6 +323,13 @@ impl SendConnection for SendConnectionHttp {
     {
         Box::new(self.send(state, send_data))
     }
+
+    fn send_raw<R>(self, raw_message: R) -> Box<Future<Item = Self, Error = error::Error> + Send>
+    where
+        R: RawMessageCommon,
+    {
+        Box::new(self.send_raw(raw_message))
+    }
 }
 
 impl RecvConnection for RecvConnectionHttp {
@@ -305,6 +347,13 @@ impl RecvConnection for RecvConnectionHttp {
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
         Box::new(self.recv(state))
+    }
+
+    fn recv_raw<S>(self) -> Box<Future<Item = (Self, S), Error = error::Error> + Send>
+    where
+        S: RawMessageCommon,
+    {
+        Box::new(self.recv_raw())
     }
 }
 
