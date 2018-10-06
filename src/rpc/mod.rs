@@ -46,8 +46,8 @@ impl AppInfo {
     /// Construct an `AppInfo` instance from API id and API hash.
     pub fn new(api_id: i32, api_hash: String) -> AppInfo {
         AppInfo {
-            api_id: api_id,
-            api_hash: api_hash,
+            api_id,
+            api_hash,
         }
     }
 
