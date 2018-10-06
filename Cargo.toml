@@ -13,15 +13,15 @@ categories = ["api-bindings"]
 
 
 [dependencies]
-aes = { version = "0.2", optional = true }
+aes = { version = "0.3", optional = true }
 arrayref = "0.3"
 base64 = { version = "0.9", optional = true }
-byteorder = "1.1"
+byteorder = "1.2"
 cfg-if = "0.1"
 chrono = "0.4"
-crc = "1.5"
+crc = "1.8"
 der-parser = { version = "1.0", optional = true }
-digest = { version = "0.7", optional = true }
+digest = { version = "0.8", optional = true }
 envy = "0.3"
 erased-serde = "0.3"
 error-chain = "0.12"
@@ -29,7 +29,7 @@ flate2 = "1.0"
 futures = "0.1"
 lazy_static = "1.0"
 log = "0.4"
-nom = { version = "4.0", optional = true }
+nom = { version = "4.1", optional = true }
 num-bigint = { version = "0.2", features = ["rand"], optional = true }
 num-traits = "0.2"
 openssl = { version = "0.10", optional = true }
@@ -39,8 +39,8 @@ serde_bytes = "0.10"
 serde_derive = "1.0"
 serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "fcf769e" }
 serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "fcf769e" }
-sha-1 = { version = "0.7", optional = true }
-sha2 = { version = "0.7", optional = true }
+sha-1 = { version = "0.8", optional = true }
+sha2 = { version = "0.8", optional = true }
 state_machine_future = { git = "https://github.com/hcpl/state_machine_future", rev = "dc98d89" }
 tokio-executor = "0.1"
 tokio-io = "0.1"

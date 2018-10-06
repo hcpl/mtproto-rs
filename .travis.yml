@@ -13,6 +13,9 @@ env:
     - RUST_BACKTRACE=1
     - RUST_LOG=build_script_build=debug
 
+install:
+  - rustup component add rustfmt-preview
+
 script:
   - pwd
   - ls -la
