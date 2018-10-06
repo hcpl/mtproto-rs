@@ -185,5 +185,24 @@ error_chain! {
             description("server failed to verify DH parameters")
             display("server failed to verify DH parameters")
         }
+
+        UnboundedReceiverPoll {
+            description("failed to poll an unbounded receiver")
+            display("failed to poll an unbounded receiver")
+        }
+
+        UnboundedSenderPollComplete(raw_message: ::tl::message::RawMessage) {
+            description("failed to poll an unbounded sender of raw messages to completion")
+            display(
+                "failed to poll an unbounded sender of raw messages to completion: SendError({:?})",
+                raw_message)
+        }
+
+        UnboundedSenderUnboundedSend(raw_message: ::tl::message::RawMessage) {
+            description("failed to send a raw message into an unbounded sender")
+            display(
+                "failed to send a raw message into an unbounded sender: SendError({:?})",
+                raw_message)
+        }
     }
 }

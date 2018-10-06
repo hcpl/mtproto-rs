@@ -35,6 +35,12 @@ pub struct RawMessagePlain {
     message_data: UnsizedByteBuf,
 }
 
+impl<T: Identifiable + MtProtoSized> MessagePlain<T> {
+    pub fn into_body(self) -> T {
+        self.body.into_inner().into_inner()
+    }
+}
+
 impl<T: Serialize + Identifiable + MtProtoSized> MessagePlain<T> {
     pub fn to_raw(&self) -> error::Result<RawMessagePlain> {
         let Self { message_id, ref body } = *self;
@@ -142,6 +148,12 @@ pub struct RawMessage {
 #[derive(Debug)]
 pub struct RawMessageSeed {
     encrypted_data_len: usize,
+}
+
+impl<T: Identifiable + MtProtoSized> Message<T> {
+    pub fn into_body(self) -> T {
+        self.data.body.into_inner().into_inner()
+    }
 }
 
 impl<T: Serialize + Identifiable + MtProtoSized> Message<T> {
@@ -586,7 +598,7 @@ impl<T> MessageCommon<T> for MessagePlain<T>
     }
 
     fn into_body(self) -> T {
-        self.body.into_inner().into_inner()
+        self.into_body()
     }
 }
 
@@ -625,7 +637,7 @@ impl<T> MessageCommon<T> for Message<T>
     }
 
     fn into_body(self) -> T {
-        self.data.body.into_inner().into_inner()
+        self.into_body()
     }
 }
 
