@@ -1,7 +1,9 @@
 use std::fmt;
+use std::mem;
+use std::net::SocketAddr;
 
 use futures::{
-    self, Future, IntoFuture, Stream,
+    self, Future, Sink, Stream,
     sync::mpsc,
 };
 use serde::ser::Serialize;
@@ -10,7 +12,7 @@ use tokio_executor;
 
 use ::error::{self, ErrorKind};
 use ::network::{
-    connection::Connection,
+    connection::{SERVER_ADDRS, Connection},
     state::State,
 };
 use ::protocol::ProtocolVersion;
@@ -19,30 +21,62 @@ use ::tl::TLObject;
 use ::tl::message::{Message, RawMessage};
 
 
-pub fn new<C: Connection>(conn: C, version: ProtocolVersion) -> SenderDisconnected<C> {
-    SenderDisconnected { state: State::new(version), conn }
+#[derive(Debug)]
+pub struct SenderBuilder {
+    version: Option<ProtocolVersion>,
+    server_addr: Option<SocketAddr>,
+}
+
+impl SenderBuilder {
+    pub fn version(&mut self, version: ProtocolVersion) -> &mut Self {
+        self.version = Some(version);
+        self
+    }
+
+    pub fn server_addr(&mut self, server_addr: SocketAddr) -> &mut Self {
+        self.server_addr = Some(server_addr);
+        self
+    }
+
+    pub fn build(&self) -> SenderDisconnected {
+        SenderDisconnected {
+            state: State::new(self.version.unwrap_or(ProtocolVersion::V2)),
+            server_addr: self.server_addr.unwrap_or(SERVER_ADDRS[0]),
+        }
+    }
 }
 
 
 #[derive(Debug)]
-pub struct SenderDisconnected<C> {
+pub struct SenderDisconnected {
     state: State,
-    conn: C,
+    server_addr: SocketAddr,
 }
 
 #[derive(Debug)]
 pub struct SenderConnected {
     state: State,
+    server_addr: SocketAddr,
     send_queue_send: mpsc::UnboundedSender<RawMessage>,
     recv_queue_recv: mpsc::UnboundedReceiver<RawMessage>,
     pending_messages: Vec<RawMessage>,
 }
 
-impl<C: Connection> SenderDisconnected<C> {
-    pub fn connect(self) -> impl Future<Item = SenderConnected, Error = error::Error> {
-        self.authenticate().map(|sender_disconnd| {
-            let Self { state, conn } = sender_disconnd;
+impl SenderDisconnected {
+    pub fn connect<C>(self) -> impl Future<Item = SenderConnected, Error = error::Error>
+        where C: Connection,
+    {
+        let Self { state, server_addr } = self;
 
+        C::connect(server_addr).and_then(|conn| {
+            if state.auth_key.is_none() {
+                futures::future::Either::A(auth::auth_with_state(state, conn))
+            } else {
+                warn!("User is already authenticated!");
+                // FIXME: Return "already authenticated" error here?
+                futures::future::Either::B(futures::future::ok((state, conn)))
+            }
+        }).map(move |(state, conn)| {
             let (send_conn, recv_conn) = conn.split();
             let (send_queue_send, send_queue_recv) = mpsc::unbounded();
             let (recv_queue_send, recv_queue_recv) = mpsc::unbounded();
@@ -52,56 +86,61 @@ impl<C: Connection> SenderDisconnected<C> {
             let recv_loop_fut = recv_loop::RecvLoop::start(true, recv_conn, recv_queue_send);
 
             tokio_executor::spawn(send_loop_fut
-                .map_err(|e| eprintln!("error from send loop: {} ({:?})", e, e)));
+                .map_err(|e| error!("error from send loop: {} ({:?})", e, e)));
             tokio_executor::spawn(recv_loop_fut
-                .map_err(|e| eprintln!("error from recv loop: {} ({:?})", e, e)));
+                .map_err(|e| error!("error from recv loop: {} ({:?})", e, e)));
 
-            SenderConnected { state, send_queue_send, recv_queue_recv, pending_messages }
-        })
-    }
-
-    fn authenticate(self) -> impl Future<Item = Self, Error = error::Error> {
-        if self.state.auth_key.is_none() {
-            futures::future::Either::A(self.impl_authenticate())
-        } else {
-            warn!("User is already authenticated!");
-            // FIXME: Return "already authenticated" error here?
-            futures::future::Either::B(futures::future::ok(self))
-        }
-    }
-
-    fn impl_authenticate(self) -> impl Future<Item = Self, Error = error::Error> {
-        let Self { state, conn } = self;
-
-        auth::auth_with_state(conn, state).map(move |values| {
-            Self {
-                state: values.state,
-                conn: values.conn,
-            }
+            SenderConnected { state, server_addr, send_queue_send, recv_queue_recv, pending_messages }
         })
     }
 }
 
 impl SenderConnected {
-    pub fn send<T>(mut self, request_data: T) -> impl Future<Item = Self, Error = error::Error>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.state.create_message::<T, Message<T>>(request_data).and_then(|message| {
-            message.to_raw(self.state.auth_raw_key().unwrap(), self.state.version)
-        }).into_future().and_then(|raw_message| {
-            self.send_raw(raw_message)
+    pub fn disconnect(self) -> impl Future<Item = SenderDisconnected, Error = error::Error> {
+        let Self {
+            state, server_addr, send_queue_send, mut recv_queue_recv, pending_messages,
+        } = self;
+
+        mem::drop(pending_messages);
+        recv_queue_recv.close();
+
+        futures::future::loop_fn(recv_queue_recv, |recv_queue_recv| {
+            recv_queue_recv.into_future().map(|(raw_message, recv_queue_recv)| {
+                if let Some(raw_message) = raw_message {
+                    mem::drop(raw_message);
+                    return futures::future::Loop::Continue(recv_queue_recv);
+                }
+
+                mem::drop(recv_queue_recv);
+                futures::future::Loop::Break(())
+            })
+        }).map_err(|((), _recv_queue_recv)| {
+            panic!("`UnboundedReceiver` does not normally fail, so probably OOM happened")
+        }).and_then(|()| {
+            send_queue_send.flush().map(mem::drop).map_err(|error| {
+                ErrorKind::UnboundedSenderPollComplete(error.into_inner()).into()
+            })
+        }).map(move |()| {
+            SenderDisconnected { state, server_addr }
         })
     }
 
-    pub fn send_raw(self, raw_message: RawMessage) -> impl Future<Item = Self, Error = error::Error> {
-        let Self { state, send_queue_send, recv_queue_recv, pending_messages } = self;
+    pub fn send<T>(mut self, request_data: T) -> error::Result<Self>
+    where
+        T: fmt::Debug + Serialize + TLObject + Send,
+    {
+        let message = self.state.create_message::<T, Message<T>>(request_data)?;
+        let raw_message = message.to_raw(self.state.auth_raw_key().unwrap(), self.state.version)?;
 
-        send_queue_send.unbounded_send(raw_message).map_err(|e| {
-            ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into()
-        }).into_future().and_then(|()| {
-            Ok(Self { state, send_queue_send, recv_queue_recv, pending_messages })
-        })
+        self.send_raw(raw_message)
+    }
+
+    pub fn send_raw(self, raw_message: RawMessage) -> error::Result<Self> {
+        let Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages } = self;
+
+        send_queue_send.unbounded_send(raw_message)
+            .map(|()| Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages })
+            .map_err(|e| ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into())
     }
 
     pub fn recv<U>(self) -> impl Future<Item = (Self, Option<U>), Error = error::Error>
@@ -119,7 +158,9 @@ impl SenderConnected {
             )
         }
 
-        let Self { state, send_queue_send, recv_queue_recv, mut pending_messages } = self;
+        let Self {
+            state, server_addr, send_queue_send, recv_queue_recv, mut pending_messages,
+        } = self;
 
         let message = swap_remove_transformed(&mut pending_messages, |raw_message| {
             match message_from_raw(&raw_message, &state) {
@@ -129,7 +170,9 @@ impl SenderConnected {
             }
         });
 
-        let sender_connd = Self { state, send_queue_send, recv_queue_recv, pending_messages };
+        let sender_connd = Self {
+            state, server_addr, send_queue_send, recv_queue_recv, pending_messages,
+        };
 
         if let Some(message) = message {
             let body = message.into_body();
@@ -152,22 +195,24 @@ impl SenderConnected {
                     },
                     None => futures::future::Loop::Break((sender_connd, None)),
                 }
-            })
+            }).map_err(|()| unimplemented!())
         }))
     }
 
     pub fn recv_raw(self)
-        -> impl Future<Item = (Self, Option<RawMessage>), Error = error::Error>
+        -> impl Future<Item = (Self, Option<RawMessage>), Error = ()>
     {
-        let Self { state, send_queue_send, recv_queue_recv, pending_messages } = self;
+        let Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages } = self;
 
-        recv_queue_recv.into_future().map(|(raw_message, recv_queue_recv)| {
+        recv_queue_recv.into_future().map(move |(raw_message, recv_queue_recv)| {
             let sender_connd = Self {
-                state, send_queue_send, recv_queue_recv, pending_messages,
+                state, server_addr, send_queue_send, recv_queue_recv, pending_messages,
             };
 
             (sender_connd, raw_message)
-        }).map_err(|((), _recv_queue_recv)| unreachable!())
+        }).map_err(|((), _recv_queue_recv)| {
+            panic!("`UnboundedReceiver` does not normally fail, so probably OOM happened")
+        })
     }
 }
 

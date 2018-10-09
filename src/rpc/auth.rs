@@ -54,16 +54,11 @@ impl PartialEq for AuthKey {
 }
 
 
-pub struct AuthValues<C> {
-    pub conn: C,
-    pub state: State,
-}
-
 /// Combine all authorization steps defined below.
-pub fn auth_with_state<C: Connection>(conn: C, state: State)
-    -> impl Future<Item = AuthValues<C>, Error = error::Error>
+pub fn auth_with_state<C: Connection>(state: State, conn: C)
+    -> impl Future<Item = (State, C), Error = error::Error>
 {
-    futures::future::ok(Step1Input { conn, state })
+    futures::future::ok(Step1Input { state, conn })
         .and_then(auth_step1)
         .and_then(auth_step2)
         .and_then(auth_step3)
@@ -71,8 +66,8 @@ pub fn auth_with_state<C: Connection>(conn: C, state: State)
 }
 
 struct Step1Input<C> {
-    conn: C,
     state: State,
+    conn: C,
 }
 
 /// Step 1: DH exchange initiation using PQ request
@@ -353,7 +348,7 @@ struct Step4Input<C> {
 }
 
 fn auth_step4<C: Connection>(input: Step4Input<C>)
-    -> error::Result<AuthValues<C>>
+    -> error::Result<(State, C)>
 {
     let Step4Input {
         conn,
@@ -387,7 +382,7 @@ fn auth_step4<C: Connection>(input: Step4Input<C>)
             state.auth_key = Some(auth_key);
             state.time_offset = time_offset;
 
-            Ok(AuthValues { conn, state })
+            Ok((state, conn))
         },
         types::Set_client_DH_params_answer::dh_gen_retry(dh_gen_retry) => {
             warn!("DH params verification needs a retry: {:?}", dh_gen_retry);

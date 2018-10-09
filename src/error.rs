@@ -55,16 +55,6 @@ error_chain! {
                 fingerprints)
         }
 
-        NoModulus {
-            description("No modulus found from a RSA key")
-            display("No modulus found from a RSA key")
-        }
-
-        NoExponent {
-            description("No exponent found from a RSA key")
-            display("No exponent found from a RSA key")
-        }
-
         FactorizationFailureSquarePq(pq: u64) {
             description("Factorization failed: pq is a square number")
             display("Factorization failed: pq = {} is a square number", pq)

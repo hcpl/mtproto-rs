@@ -165,6 +165,18 @@ impl Connection for ConnectionHttp {
     type SendConnection = SendConnectionHttp;
     type RecvConnection = RecvConnectionHttp;
 
+    fn connect(server_addr: SocketAddr)
+        -> Box<Future<Item = Self, Error = error::Error> + Send>
+    {
+        Box::new(Self::connect(server_addr))
+    }
+
+    fn with_default_server()
+        -> Box<Future<Item = Self, Error = error::Error> + Send>
+    {
+        Box::new(Self::with_default_server())
+    }
+
     fn request_plain<T, U>(self, state: State, request_data: T)
         -> Box<Future<Item = (Self, State, U), Error = error::Error> + Send>
     where
