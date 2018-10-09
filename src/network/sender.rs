@@ -25,6 +25,7 @@ use ::tl::message::{Message, RawMessage};
 pub struct SenderBuilder {
     version: Option<ProtocolVersion>,
     server_addr: Option<SocketAddr>,
+    retries: Option<usize>,
 }
 
 impl SenderBuilder {
@@ -38,10 +39,16 @@ impl SenderBuilder {
         self
     }
 
+    pub fn retries(&mut self, retries: usize) -> &mut Self {
+        self.retries = Some(retries);
+        self
+    }
+
     pub fn build(&self) -> SenderDisconnected {
         SenderDisconnected {
             state: State::new(self.version.unwrap_or(ProtocolVersion::V2)),
             server_addr: self.server_addr.unwrap_or(SERVER_ADDRS[0]),
+            retries: self.retries.unwrap_or(5),
         }
     }
 }
@@ -51,12 +58,14 @@ impl SenderBuilder {
 pub struct SenderDisconnected {
     state: State,
     server_addr: SocketAddr,
+    retries: usize,
 }
 
 #[derive(Debug)]
 pub struct SenderConnected {
     state: State,
     server_addr: SocketAddr,
+    retries: usize,
     send_queue_send: mpsc::UnboundedSender<RawMessage>,
     recv_queue_recv: mpsc::UnboundedReceiver<RawMessage>,
     pending_messages: Vec<RawMessage>,
@@ -66,9 +75,9 @@ impl SenderDisconnected {
     pub fn connect<C>(self) -> impl Future<Item = SenderConnected, Error = error::Error>
         where C: Connection,
     {
-        let Self { state, server_addr } = self;
+        let Self { state, server_addr, retries } = self;
 
-        C::connect(server_addr).and_then(|conn| {
+        retryable(move || C::connect(server_addr), retries).and_then(|conn| {
             if state.auth_key.is_none() {
                 futures::future::Either::A(auth::auth_with_state(state, conn))
             } else {
@@ -90,15 +99,36 @@ impl SenderDisconnected {
             tokio_executor::spawn(recv_loop_fut
                 .map_err(|e| error!("error from recv loop: {} ({:?})", e, e)));
 
-            SenderConnected { state, server_addr, send_queue_send, recv_queue_recv, pending_messages }
+            SenderConnected {
+                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+            }
         })
     }
+}
+
+fn retryable<F, Fut>(new_fut: F, retries: usize)
+    -> impl Future<Item = Fut::Item, Error = Fut::Error>
+where
+    F: FnOnce() -> Fut + Copy,
+    Fut: Future,
+{
+    futures::future::loop_fn(0, move |retry| {
+        new_fut().then(move |res| match res {
+            Ok(value) => Ok(futures::future::Loop::Break(value)),
+            // FIXME: collect all errors for all failed attempts
+            Err(e) => if retry < retries {
+                Ok(futures::future::Loop::Continue(retry + 1))
+            } else {
+                Err(e)
+            },
+        })
+    })
 }
 
 impl SenderConnected {
     pub fn disconnect(self) -> impl Future<Item = SenderDisconnected, Error = error::Error> {
         let Self {
-            state, server_addr, send_queue_send, mut recv_queue_recv, pending_messages,
+            state, server_addr, retries, send_queue_send, mut recv_queue_recv, pending_messages,
         } = self;
 
         mem::drop(pending_messages);
@@ -121,8 +151,15 @@ impl SenderConnected {
                 ErrorKind::UnboundedSenderPollComplete(error.into_inner()).into()
             })
         }).map(move |()| {
-            SenderDisconnected { state, server_addr }
+            SenderDisconnected { state, server_addr, retries }
         })
+    }
+
+    pub fn reconnect<C>(self) -> impl Future<Item = Self, Error = error::Error>
+    where
+        C: Connection,
+    {
+        self.disconnect().and_then(SenderDisconnected::connect::<C>)
     }
 
     pub fn send<T>(mut self, request_data: T) -> error::Result<Self>
@@ -136,10 +173,14 @@ impl SenderConnected {
     }
 
     pub fn send_raw(self, raw_message: RawMessage) -> error::Result<Self> {
-        let Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages } = self;
+        let Self {
+            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+        } = self;
 
         send_queue_send.unbounded_send(raw_message)
-            .map(|()| Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages })
+            .map(|()| Self {
+                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+            })
             .map_err(|e| ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into())
     }
 
@@ -159,7 +200,7 @@ impl SenderConnected {
         }
 
         let Self {
-            state, server_addr, send_queue_send, recv_queue_recv, mut pending_messages,
+            state, server_addr, retries, send_queue_send, recv_queue_recv, mut pending_messages,
         } = self;
 
         let message = swap_remove_transformed(&mut pending_messages, |raw_message| {
@@ -171,7 +212,7 @@ impl SenderConnected {
         });
 
         let sender_connd = Self {
-            state, server_addr, send_queue_send, recv_queue_recv, pending_messages,
+            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
         };
 
         if let Some(message) = message {
@@ -202,11 +243,13 @@ impl SenderConnected {
     pub fn recv_raw(self)
         -> impl Future<Item = (Self, Option<RawMessage>), Error = ()>
     {
-        let Self { state, server_addr, send_queue_send, recv_queue_recv, pending_messages } = self;
+        let Self {
+            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+        } = self;
 
         recv_queue_recv.into_future().map(move |(raw_message, recv_queue_recv)| {
             let sender_connd = Self {
-                state, server_addr, send_queue_send, recv_queue_recv, pending_messages,
+                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
             };
 
             (sender_connd, raw_message)
