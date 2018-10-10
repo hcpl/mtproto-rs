@@ -67,6 +67,7 @@ cfg_if! {
 #[macro_use]
 mod utils;
 
+pub(crate) mod async_io;
 pub(crate) mod bigint;
 pub(crate) mod crypto;
 

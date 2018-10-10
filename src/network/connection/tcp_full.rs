@@ -11,6 +11,7 @@ use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
+use ::async_io;
 use ::error::{self, ErrorKind};
 use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
 use ::network::connection::tcp_common;
@@ -86,7 +87,7 @@ impl ConnectionTcpFull {
 
         prepare_send_data(raw_message, &mut sent_counter)
             .into_future()
-            .and_then(|data| common::perform_send(socket, data))
+            .and_then(|data| common::perform_send(socket, data).map_err(|(_, _, e)| e))
             .map(move |socket| Self { socket, sent_counter })
     }
 
@@ -126,7 +127,7 @@ impl ConnectionTcpFull {
     {
         let Self { socket, sent_counter } = self;
 
-        perform_recv(socket).and_then(move |(socket, data)| {
+        perform_recv(socket).map_err(|(_, _, e)| e).and_then(move |(socket, data)| {
             tcp_common::parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { socket, sent_counter }, raw_message)
@@ -273,7 +274,7 @@ impl SendConnectionTcpFull {
 
         prepare_send_data(raw_message, &mut sent_counter)
             .into_future()
-            .and_then(|data| common::perform_send(send_socket, data))
+            .and_then(|data| common::perform_send(send_socket, data).map_err(|(_, _, e)| e))
             .map(move |send_socket| Self { send_socket, sent_counter })
     }
 }
@@ -315,7 +316,7 @@ impl RecvConnectionTcpFull {
     {
         let Self { recv_socket } = self;
 
-        perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
+        perform_recv(recv_socket).map_err(|(_, _, e)| e).and_then(move |(recv_socket, data)| {
             tcp_common::parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { recv_socket }, raw_message)
@@ -375,11 +376,14 @@ impl RecvConnection for RecvConnectionTcpFull {
 }
 
 
-fn perform_recv<R>(recv: R) -> impl Future<Item = (R, Vec<u8>), Error = error::Error>
+fn perform_recv<R>(recv: R)
+    -> impl Future<Item = (R, Vec<u8>), Error = (R, Vec<u8>, error::Error)>
 where
     R: fmt::Debug + AsyncRead,
 {
-    tokio_io::io::read_exact(recv, [0; 8]).map_err(Into::into).and_then(|(recv, first_bytes)| {
+    async_io::read_exact(recv, [0; 8]).map_err(|(recv, first_bytes, e)| {
+        (recv, first_bytes.to_vec(), e.into())
+    }).and_then(|(recv, first_bytes)| {
         debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
             first_bytes.len(), recv, first_bytes);
 
@@ -388,8 +392,8 @@ where
         // TODO: check seq_no
         let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
-        tokio_io::io::read_exact(recv, vec![0; ulen - 8])
-            .map_err(Into::into)
+        async_io::read_exact(recv, vec![0; ulen - 8])
+            .map_err(|(recv, last_bytes, e)| (recv, last_bytes, e.into()))
             .and_then(move |(recv, last_bytes)| {
                 debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
                     last_bytes.len(), recv, last_bytes);
@@ -406,7 +410,8 @@ where
                 if value == checksum {
                     Ok((recv, body))
                 } else {
-                    bail!(ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum))
+                    bail!((recv, body,
+                        ErrorKind::TcpFullModeResponseInvalidChecksum(value, checksum).into()))
                 }
             })
     })

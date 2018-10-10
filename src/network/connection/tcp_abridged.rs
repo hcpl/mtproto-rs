@@ -11,6 +11,7 @@ use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
+use ::async_io;
 use ::error::{self, ErrorKind};
 use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
 use ::network::connection::tcp_common;
@@ -85,7 +86,7 @@ impl ConnectionTcpAbridged {
 
         prepare_send_data(raw_message, &mut is_first_request)
             .into_future()
-            .and_then(|data| common::perform_send(socket, data))
+            .and_then(|data| common::perform_send(socket, data).map_err(|(_, _, e)| e))
             .map(move |socket| Self { socket, is_first_request })
     }
 
@@ -125,7 +126,7 @@ impl ConnectionTcpAbridged {
     {
         let Self { socket, is_first_request } = self;
 
-        perform_recv(socket).and_then(move |(socket, data)| {
+        perform_recv(socket).map_err(|(_, _, e)| e).and_then(move |(socket, data)| {
             tcp_common::parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { socket, is_first_request }, raw_message)
@@ -272,7 +273,7 @@ impl SendConnectionTcpAbridged {
 
         prepare_send_data(raw_message, &mut is_first_request)
             .into_future()
-            .and_then(|data| common::perform_send(send_socket, data))
+            .and_then(|data| common::perform_send(send_socket, data).map_err(|(_, _, e)| e))
             .map(move |send_socket| Self { send_socket, is_first_request })
     }
 }
@@ -314,7 +315,7 @@ impl RecvConnectionTcpAbridged {
     {
         let Self { recv_socket } = self;
 
-        perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
+        perform_recv(recv_socket).map_err(|(_, _, e)| e).and_then(move |(recv_socket, data)| {
             tcp_common::parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { recv_socket }, raw_message)
@@ -374,29 +375,32 @@ impl RecvConnection for RecvConnectionTcpAbridged {
 }
 
 
-fn perform_recv<R>(recv: R) -> impl Future<Item = (R, Vec<u8>), Error = error::Error>
+fn perform_recv<R>(recv: R)
+    -> impl Future<Item = (R, Vec<u8>), Error = (R, Vec<u8>, error::Error)>
 where
     R: fmt::Debug + AsyncRead,
 {
-    tokio_io::io::read_exact(recv, [0; 1]).and_then(|(recv, byte_id)| {
+    async_io::read_exact(recv, [0; 1]).map_err(|(recv, byte_id, e)| {
+        (recv, byte_id.to_vec(), e)
+    }).and_then(|(recv, byte_id)| {
         debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
             byte_id.len(), recv, byte_id);
 
         if byte_id == [0x7f] {
-            Either::A(tokio_io::io::read_exact(recv, [0; 3]).map(|(recv, bytes_len)| {
+            Either::A(async_io::read_exact(recv, [0; 3]).map(|(recv, bytes_len)| {
                 debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
                     bytes_len.len(), recv, bytes_len);
 
                 let len = LittleEndian::read_uint(&bytes_len, 3) as usize * 4;
                 (recv, len)
-            }))
+            }).map_err(|(recv, bytes_len, e)| (recv, bytes_len.to_vec(), e)))
         } else {
             Either::B(futures::future::ok((recv, byte_id[0] as usize * 4)))
         }
     }).and_then(|(recv, len)| {
         debug!("Got length from server: recv = {:?}, length = {}", recv, len);
-        tokio_io::io::read_exact(recv, vec![0; len])
-    }).map_err(Into::into)
+        async_io::read_exact(recv, vec![0; len])
+    }).map_err(|(recv, body, e)| (recv, body, e.into()))
 }
 
 fn prepare_send_data<R>(raw_message: R, is_first_request: &mut bool) -> error::Result<Vec<u8>>

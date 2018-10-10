@@ -5,8 +5,9 @@ use futures::Future;
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
 use serde_mtproto::MtProtoSized;
-use tokio_io::{self, AsyncWrite};
+use tokio_io::AsyncWrite;
 
+use ::async_io;
 use ::error::{self, ErrorKind};
 use ::tl::TLObject;
 use ::tl::message::{MessageCommon, RawMessageCommon};
@@ -79,16 +80,16 @@ pub trait RecvConnection: Send + Sized + 'static {
 
 
 pub(super) fn perform_send<S>(send: S, message_bytes: Vec<u8>)
-    -> impl Future<Item = S, Error = error::Error>
+    -> impl Future<Item = S, Error = (S, Vec<u8>, error::Error)>
 where
     S: fmt::Debug + AsyncWrite,
 {
-    tokio_io::io::write_all(send, message_bytes).map(|(send, sent_bytes)| {
+    async_io::write_all(send, message_bytes).map(|(send, sent_bytes)| {
         debug!("Sent {} bytes to server: send = {:?}, bytes = {:?}",
             sent_bytes.len(), send, sent_bytes);
 
         send
-    }).map_err(Into::into)
+    }).map_err(|(send, sent_bytes, e)| (send, sent_bytes, e.into()))
 }
 
 pub(super) fn from_raw<U, N>(raw_message: &N::Raw, state: &State) -> error::Result<N>

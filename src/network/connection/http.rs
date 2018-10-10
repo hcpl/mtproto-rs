@@ -10,6 +10,7 @@ use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
+use ::async_io;
 use ::error::{self, ErrorKind};
 use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
 use ::network::state::State;
@@ -81,7 +82,7 @@ impl ConnectionHttp {
 
         prepare_send_data(raw_message)
             .into_future()
-            .and_then(|data| common::perform_send(socket, data))
+            .and_then(|data| common::perform_send(socket, data).map_err(|(_, _, e)| e))
             .map(move |socket| Self { socket })
     }
 
@@ -121,7 +122,7 @@ impl ConnectionHttp {
     {
         let Self { socket } = self;
 
-        perform_recv(socket).and_then(move |(socket, data)| {
+        perform_recv(socket).map_err(|(_, _, e)| e).and_then(move |(socket, data)| {
             parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { socket }, raw_message)
@@ -267,7 +268,7 @@ impl SendConnectionHttp {
 
         prepare_send_data(raw_message)
             .into_future()
-            .and_then(|data| common::perform_send(send_socket, data))
+            .and_then(|data| common::perform_send(send_socket, data).map_err(|(_, _, e)| e))
             .map(move |send_socket| Self { send_socket })
     }
 
@@ -310,7 +311,7 @@ impl RecvConnectionHttp {
     {
         let Self { recv_socket } = self;
 
-        perform_recv(recv_socket).and_then(move |(recv_socket, data)| {
+        perform_recv(recv_socket).map_err(|(_, _, e)| e).and_then(move |(recv_socket, data)| {
             parse_response::<S>(&data).map(move |raw_message| {
                 debug!("Received raw message: {:?}", raw_message);
                 (Self { recv_socket }, raw_message)
@@ -370,11 +371,12 @@ impl RecvConnection for RecvConnectionHttp {
 }
 
 
-fn perform_recv<R>(recv: R) -> impl Future<Item = (R, Vec<u8>), Error = error::Error>
+fn perform_recv<R>(recv: R)
+    -> impl Future<Item = (R, Vec<u8>), Error = (R, Vec<u8>, error::Error)>
 where
     R: fmt::Debug + AsyncRead,
 {
-    let lines = tokio_io::io::lines(BufReader::new(recv));
+    let lines = async_io::lines(BufReader::new(recv));
 
     debug!("Lines stream of buffered recv: {:?}", lines);
 
@@ -403,14 +405,16 @@ where
             assert_eq!(line.unwrap(), "");
             (lines, len)
         })
-    }).map_err(|(e, _)| e).and_then(|(lines, len)| {
-        tokio_io::io::read_exact(lines.into_inner(), vec![0; len]).map(|(buf_recv, body)| {
+    }).map_err(|((buf_recv, line, e), _)| {
+        (buf_recv, line.into_bytes(), e)
+    }).and_then(|(lines, len)| {
+        async_io::read_exact(lines.into_inner(), vec![0; len]).map(|(buf_recv, body)| {
             debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
                 body.len(), buf_recv, body);
 
             (buf_recv.into_inner(), body)
         })
-    }).map_err(Into::into)
+    }).map_err(|(buf_recv, body, e)| (buf_recv.into_inner(), body, e.into()))
 }
 
 fn prepare_send_data<R>(raw_message: R) -> error::Result<Vec<u8>>
