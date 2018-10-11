@@ -1,6 +1,7 @@
 use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use futures::{
     self, Future, Sink, Stream,
@@ -9,6 +10,7 @@ use futures::{
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_executor;
+use tokio_timer;
 
 use ::error::{self, ErrorKind};
 use ::network::{
@@ -21,11 +23,16 @@ use ::tl::TLObject;
 use ::tl::message::{Message, RawMessage};
 
 
+const DEFAULT_RETRIES: usize = 5;
+const DEFAULT_RETRIES_DELAY_MILLIS: u64 = 50;
+
+
 #[derive(Debug)]
 pub struct SenderBuilder {
     version: Option<ProtocolVersion>,
     server_addr: Option<SocketAddr>,
     retries: Option<usize>,
+    retry_delay_millis: Option<u64>,
 }
 
 impl SenderBuilder {
@@ -44,11 +51,17 @@ impl SenderBuilder {
         self
     }
 
+    pub fn retry_delay_millis(&mut self, retry_delay_millis: u64) -> &mut Self {
+        self.retry_delay_millis = Some(retry_delay_millis);
+        self
+    }
+
     pub fn build(&self) -> SenderDisconnected {
         SenderDisconnected {
             state: State::new(self.version.unwrap_or(ProtocolVersion::V2)),
             server_addr: self.server_addr.unwrap_or(SERVER_ADDRS[0]),
-            retries: self.retries.unwrap_or(5),
+            retries: self.retries.unwrap_or(DEFAULT_RETRIES),
+            retry_delay_millis: self.retry_delay_millis.unwrap_or(DEFAULT_RETRIES_DELAY_MILLIS),
         }
     }
 }
@@ -59,6 +72,7 @@ pub struct SenderDisconnected {
     state: State,
     server_addr: SocketAddr,
     retries: usize,
+    retry_delay_millis: u64,
 }
 
 #[derive(Debug)]
@@ -66,6 +80,7 @@ pub struct SenderConnected {
     state: State,
     server_addr: SocketAddr,
     retries: usize,
+    retry_delay_millis: u64,
     send_queue_send: mpsc::UnboundedSender<RawMessage>,
     recv_queue_recv: mpsc::UnboundedReceiver<RawMessage>,
     pending_messages: Vec<RawMessage>,
@@ -75,11 +90,14 @@ impl SenderDisconnected {
     pub fn connect<C>(self) -> impl Future<Item = SenderConnected, Error = error::Error>
         where C: Connection,
     {
-        let Self { state, server_addr, retries } = self;
+        let Self { state, server_addr, retries, retry_delay_millis } = self;
 
-        retryable(move || C::connect(server_addr), retries).and_then(|conn| {
+        connect_retryable::<C>(server_addr, retries, retry_delay_millis).and_then(move |conn| {
             if state.auth_key.is_none() {
-                futures::future::Either::A(auth::auth_with_state(state, conn).map_err(|(_, _, e)| e))
+                futures::future::Either::A(
+                    auth_with_state_retryable(state, conn, retries, retry_delay_millis)
+                        .map_err(|(_, _, e)| e)
+                )
             } else {
                 warn!("User is already authenticated!");
                 // FIXME: Return "already authenticated" error here?
@@ -100,26 +118,74 @@ impl SenderDisconnected {
                 .map_err(|e| error!("error from recv loop: {} ({:?})", e, e)));
 
             SenderConnected {
-                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+                state, server_addr, retries, retry_delay_millis,
+                send_queue_send, recv_queue_recv, pending_messages,
             }
         })
     }
 }
 
-fn retryable<F, Fut>(new_fut: F, retries: usize)
+fn connect_retryable<C>(server_addr: SocketAddr, retries: usize, retry_delay_millis: u64)
+    -> impl Future<Item = C, Error = error::Error>
+where
+    C: Connection,
+{
+    chain_retryable(
+        server_addr,
+        |server_addr| C::connect(server_addr).map_err(move |e| (server_addr, e)),
+        |(server_addr, e)| (server_addr, e),
+        |server_addr, e| (server_addr, e),
+        retries,
+        retry_delay_millis,
+    ).map_err(|(_, e)| e)
+}
+
+fn auth_with_state_retryable<C>(state: State, conn: C, retries: usize, retry_delay_millis: u64)
+    -> impl Future<Item = (State, C), Error = (State, C, error::Error)>
+where
+    C: Connection,
+{
+    chain_retryable(
+        (state, conn),
+        |(state, conn)| auth::auth_with_state(state, conn),
+        |(state, conn, e)| ((state, conn), e),
+        |(state, conn), e| (state, conn, e),
+        retries,
+        retry_delay_millis,
+    )
+}
+
+fn chain_retryable<Fut, S>(
+    initial_state: S,
+    new_fut: fn(S) -> Fut,
+    split_error: fn(Fut::Error) -> (S, error::Error),
+    merge_error: fn(S, error::Error) -> Fut::Error,
+    retries: usize,
+    retry_delay_millis: u64,
+)
     -> impl Future<Item = Fut::Item, Error = Fut::Error>
 where
-    F: FnOnce() -> Fut + Copy,
     Fut: Future,
 {
-    futures::future::loop_fn(0, move |retry| {
-        new_fut().then(move |res| match res {
-            Ok(value) => Ok(futures::future::Loop::Break(value)),
-            // FIXME: collect all errors for all failed attempts
-            Err(e) => if retry < retries {
-                Ok(futures::future::Loop::Continue(retry + 1))
+    use futures::future;
+
+    future::loop_fn((0, initial_state), move |(retry, state)| {
+        new_fut(state).then(move |res| match res {
+            Ok(value) => future::Either::A(future::ok(future::Loop::Break(value))),
+            // FIXME: collect all errors from all failed attempts
+            Err(error) => if retry < retries {
+                let duration = Duration::from_millis(retry_delay_millis);
+                let (new_state, cause) = split_error(error);
+
+                future::Either::B(tokio_timer::sleep(duration).then(move |res| match res {
+                    Ok(()) => Ok(future::Loop::Continue((retry + 1, new_state))),
+                    Err(e) => {
+                        let chained = cause.chain_err(|| ErrorKind::TokioTimer(e));
+                        Err(merge_error(new_state, chained))
+                    },
+                }))
             } else {
-                Err(e)
+                future::Either::A(future::err(error))
             },
         })
     })
@@ -128,7 +194,8 @@ where
 impl SenderConnected {
     pub fn disconnect(self) -> impl Future<Item = SenderDisconnected, Error = error::Error> {
         let Self {
-            state, server_addr, retries, send_queue_send, mut recv_queue_recv, pending_messages,
+            state, server_addr, retries, retry_delay_millis,
+            send_queue_send, mut recv_queue_recv, pending_messages,
         } = self;
 
         mem::drop(pending_messages);
@@ -151,7 +218,7 @@ impl SenderConnected {
                 ErrorKind::UnboundedSenderPollComplete(error.into_inner()).into()
             })
         }).map(move |()| {
-            SenderDisconnected { state, server_addr, retries }
+            SenderDisconnected { state, server_addr, retries, retry_delay_millis }
         })
     }
 
@@ -174,12 +241,14 @@ impl SenderConnected {
 
     pub fn send_raw(self, raw_message: RawMessage) -> error::Result<Self> {
         let Self {
-            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+            state, server_addr, retries, retry_delay_millis,
+            send_queue_send, recv_queue_recv, pending_messages,
         } = self;
 
         send_queue_send.unbounded_send(raw_message)
             .map(|()| Self {
-                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+                state, server_addr, retries, retry_delay_millis,
+                send_queue_send, recv_queue_recv, pending_messages,
             })
             .map_err(|e| ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into())
     }
@@ -200,7 +269,8 @@ impl SenderConnected {
         }
 
         let Self {
-            state, server_addr, retries, send_queue_send, recv_queue_recv, mut pending_messages,
+            state, server_addr, retries, retry_delay_millis,
+            send_queue_send, recv_queue_recv, mut pending_messages,
         } = self;
 
         let message = swap_remove_transformed(&mut pending_messages, |raw_message| {
@@ -212,7 +282,8 @@ impl SenderConnected {
         });
 
         let sender_connd = Self {
-            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+            state, server_addr, retries, retry_delay_millis,
+            send_queue_send, recv_queue_recv, pending_messages,
         };
 
         if let Some(message) = message {
@@ -244,12 +315,14 @@ impl SenderConnected {
         -> impl Future<Item = (Self, Option<RawMessage>), Error = ()>
     {
         let Self {
-            state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+            state, server_addr, retries, retry_delay_millis,
+            send_queue_send, recv_queue_recv, pending_messages,
         } = self;
 
         recv_queue_recv.into_future().map(move |(raw_message, recv_queue_recv)| {
             let sender_connd = Self {
-                state, server_addr, retries, send_queue_send, recv_queue_recv, pending_messages,
+                state, server_addr, retries, retry_delay_millis,
+                send_queue_send, recv_queue_recv, pending_messages,
             };
 
             (sender_connd, raw_message)

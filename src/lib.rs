@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "173"]
+#![recursion_limit = "177"]
 
 #[macro_use]
 extern crate arrayref;
@@ -33,6 +33,7 @@ extern crate state_machine_future;
 extern crate tokio_executor;
 extern crate tokio_io;
 extern crate tokio_tcp;
+extern crate tokio_timer;
 extern crate toml;
 
 cfg_if! {

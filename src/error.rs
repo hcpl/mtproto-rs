@@ -12,6 +12,7 @@ error_chain! {
         Nom(::nom::Err<Vec<u8>>) #[cfg(feature = "non-openssl-impls")];
         Io(::std::io::Error);
         OpenSsl(::openssl::error::ErrorStack) #[cfg(feature = "openssl")];
+        TokioTimer(::tokio_timer::Error);
         TomlDeserialize(::toml::de::Error);
         Utf8(::std::str::Utf8Error);
     }

@@ -45,6 +45,7 @@ state_machine_future = { git = "https://github.com/hcpl/state_machine_future", r
 tokio-executor = "0.1"
 tokio-io = "0.1"
 tokio-tcp = "0.1"
+tokio-timer = "0.2"
 toml = "0.4"
 
 [build-dependencies]
