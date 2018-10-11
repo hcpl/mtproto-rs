@@ -79,7 +79,7 @@ impl SenderDisconnected {
 
         retryable(move || C::connect(server_addr), retries).and_then(|conn| {
             if state.auth_key.is_none() {
-                futures::future::Either::A(auth::auth_with_state(state, conn))
+                futures::future::Either::A(auth::auth_with_state(state, conn).map_err(|(_, _, e)| e))
             } else {
                 warn!("User is already authenticated!");
                 // FIXME: Return "already authenticated" error here?
@@ -166,7 +166,7 @@ impl SenderConnected {
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
-        let message = self.state.create_message::<T, Message<T>>(request_data)?;
+        let message = self.state.create_message::<T, Message<T>>(request_data).map_err(|(_, e)| e)?;
         let raw_message = message.to_raw(self.state.auth_raw_key().unwrap(), self.state.version)?;
 
         self.send_raw(raw_message)
@@ -329,7 +329,7 @@ mod send_loop {
                     transition!(GotRawMessageFromQueue {
                         user_connected,
                         send_queue_recv,
-                        send_fut: send_conn.send_raw(raw_message),
+                        send_fut: Box::new(send_conn.send_raw(raw_message).map_err(|(_, _, e)| e)),
                     })
                 }
 
@@ -435,7 +435,7 @@ mod recv_loop {
                 transition!(RetrievingRawMessage {
                     user_connected,
                     recv_queue_send,
-                    recv_fut: recv_conn.recv_raw(),
+                    recv_fut: Box::new(recv_conn.recv_raw().map_err(|(_, e)| e)),
                 })
             } else {
                 let Start { user_connected, recv_conn, recv_queue_send } = start.take();

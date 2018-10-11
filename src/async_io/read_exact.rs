@@ -46,9 +46,9 @@ where
     T: AsMut<[u8]>,
 {
     type Item = (A, T);
-    type Error = (A, T, io::Error);
+    type Error = (A, io::Error);
 
-    fn poll(&mut self) -> Poll<(A, T), (A, T, io::Error)> {
+    fn poll(&mut self) -> Poll<(A, T), (A, io::Error)> {
         match self.state {
             State::Reading { ref mut a, ref mut buf, ref mut pos, ref mut error } => {
                 let buf = buf.as_mut();
@@ -74,7 +74,7 @@ where
         match mem::replace(&mut self.state, State::Empty) {
             State::Reading { a, buf, error, .. } => match error {
                 None    => Ok(Async::Ready((a, buf))),
-                Some(e) => Err((a, buf, e)),
+                Some(e) => Err((a, e)),
             },
             State::Empty => unreachable!(),
         }

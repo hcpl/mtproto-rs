@@ -53,9 +53,9 @@ where
     A: AsyncRead + BufRead,
 {
     type Item = String;
-    type Error = (A, String, io::Error);
+    type Error = (A, io::Error);
 
-    fn poll(&mut self) -> Poll<Option<String>, (A, String, io::Error)> {
+    fn poll(&mut self) -> Poll<Option<String>, (A, io::Error)> {
         match self.state {
             State::Reading { ref mut io, ref mut line, ref mut finished, ref mut error } => {
                 match io.read_line(line) {
@@ -96,7 +96,7 @@ where
 
                         Ok(Async::Ready(Some(result)))
                     },
-                    Some(e) => Err((io, line, e)),
+                    Some(e) => Err((io, e)),
                 }
             },
             State::IoOnly { .. } |

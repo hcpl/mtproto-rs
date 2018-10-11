@@ -32,7 +32,7 @@ impl State {
         }
     }
 
-    pub fn create_message<T, M>(&mut self, obj: T) -> error::Result<M>
+    pub fn create_message<T, M>(&mut self, obj: T) -> Result<M, (T, error::Error)>
         where M: MessageCommon<T>,
               T: TLObject,
     {

@@ -36,7 +36,7 @@ fn processed_auth<C, F>(conn_fut: F, tag: &'static str)
 {
     Box::new(conn_fut.and_then(|conn| {
         let state = State::new(ProtocolVersion::V1);
-        mtproto::rpc::auth::auth_with_state(state, conn)
+        mtproto::rpc::auth::auth_with_state(state, conn).map_err(|(_, _, e)| e)
     }).map(move |(state, _conn)| {
         println!("Success ({}): state = {:?}", tag, state);
     }).map_err(move |e| {

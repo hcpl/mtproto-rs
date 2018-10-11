@@ -556,12 +556,31 @@ pub trait MessageCommon<T>: fmt::Debug + Sized + Send + private::MessageCommonSe
     type Raw: RawMessageCommon<Seed = Self::RawSeed>;
     type RawSeed: for<'de> RawMessageSeedCommon<'de, Value = Self::Raw>;
 
-    fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self>;
-    fn to_raw(&self, raw_key: Option<&[u8; 256]>, version: ProtocolVersion) -> error::Result<Self::Raw>
+    fn new(
+        salt: i64,
+        session_id: i64,
+        message_id: i64,
+        seq_no: u32,
+        obj: T,
+    ) -> Result<Self, (T, error::Error)>;
+
+    fn to_raw(
+        &self,
+        raw_key: Option<&[u8; 256]>,
+        version: ProtocolVersion,
+    ) -> error::Result<Self::Raw>
         where T: Serialize;
-    fn from_raw(raw: &Self::Raw, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
+
+    fn from_raw(
+        raw: &Self::Raw,
+        raw_key: Option<&[u8; 256]>,
+        version: ProtocolVersion,
+        enum_variant_ids: &[&'static str],
+    ) -> error::Result<Self>
         where T: DeserializeOwned;
+
     fn set_message_id(&mut self, message_id: i64);
+
     fn into_body(self) -> T;
 }
 
@@ -571,20 +590,43 @@ impl<T> MessageCommon<T> for MessagePlain<T>
     type Raw = RawMessagePlain;
     type RawSeed = PhantomData<RawMessagePlain>;
 
-    fn new(_salt: i64, _session_id: i64, message_id: i64, _seq_no: u32, obj: T) -> error::Result<Self> {
-        Ok(MessagePlain {
-            message_id,
-            body: WithSize::new(Boxed::new(obj))?,
-        })
+    fn new(
+        _salt: i64,
+        _session_id: i64,
+        message_id: i64,
+        _seq_no: u32,
+        obj: T,
+    ) -> Result<Self, (T, error::Error)> {
+        // Rely on the fact that
+        // `<T as Identifiable>::type_id(obj) == <&T as Identifiable>::type_id(&obj)`
+        // and
+        // `<Boxed<T> as MtProtoSized>::size_hint(Boxed::new(obj))
+        //     == <Boxed<&T> as MtProtoSized>::size_hint(Boxed::new(&obj))`
+        match WithSize::new(Boxed::new(&obj)) {
+            Ok(_) => Ok(MessagePlain {
+                message_id,
+                body: WithSize::new(Boxed::new(obj)).unwrap_or_else(|_| unreachable!()),
+            }),
+            Err(e) => Err((obj, e.into())),
+        }
     }
 
-    fn to_raw(&self, _raw_key: Option<&[u8; 256]>, _version: ProtocolVersion) -> error::Result<RawMessagePlain>
+    fn to_raw(
+        &self,
+        _raw_key: Option<&[u8; 256]>,
+        _version: ProtocolVersion,
+    ) -> error::Result<RawMessagePlain>
         where T: Serialize
     {
         self.to_raw()
     }
 
-    fn from_raw(raw: &RawMessagePlain, _raw_key: Option<&[u8; 256]>, _version: ProtocolVersion, enum_variant_ids: &[&'static str]) -> error::Result<Self>
+    fn from_raw(
+        raw: &RawMessagePlain,
+        _raw_key: Option<&[u8; 256]>,
+        _version: ProtocolVersion,
+        enum_variant_ids: &[&'static str],
+    ) -> error::Result<Self>
         where T: DeserializeOwned
     {
         // NOTE: `Self::from_raw` triggers rustc error E0061 --- probably
@@ -608,25 +650,48 @@ impl<T> MessageCommon<T> for Message<T>
     type Raw = RawMessage;
     type RawSeed = RawMessageSeed;
 
-    fn new(salt: i64, session_id: i64, message_id: i64, seq_no: u32, obj: T) -> error::Result<Self> {
-        Ok(Message {
-            data: MessageData {
-                salt,
-                session_id,
-                message_id,
-                seq_no,
-                body: WithSize::new(Boxed::new(obj))?,
-            }
-        })
+    fn new(
+        salt: i64,
+        session_id: i64,
+        message_id: i64,
+        seq_no: u32,
+        obj: T,
+    ) -> Result<Self, (T, error::Error)> {
+        // Rely on the fact that
+        // `<T as Identifiable>::type_id(obj) == <&T as Identifiable>::type_id(&obj)`
+        // and
+        // `<Boxed<T> as MtProtoSized>::size_hint(Boxed::new(obj))
+        //     == <Boxed<&T> as MtProtoSized>::size_hint(Boxed::new(&obj))`
+        match WithSize::new(Boxed::new(&obj)) {
+            Ok(_) => Ok(Message {
+                data: MessageData {
+                    salt,
+                    session_id,
+                    message_id,
+                    seq_no,
+                    body: WithSize::new(Boxed::new(obj)).unwrap_or_else(|_| unreachable!()),
+                },
+            }),
+            Err(e) => Err((obj, e.into())),
+        }
     }
 
-    fn to_raw(&self, raw_key: Option<&[u8; 256]>, version: ProtocolVersion) -> error::Result<RawMessage>
+    fn to_raw(
+        &self,
+        raw_key: Option<&[u8; 256]>,
+        version: ProtocolVersion,
+    ) -> error::Result<RawMessage>
         where T: Serialize
     {
         self.to_raw(raw_key.as_ref().unwrap(), version)  // FIXME
     }
 
-    fn from_raw(raw: &RawMessage, raw_key: Option<&[u8; 256]>, version: ProtocolVersion, _enum_variant_ids: &[&'static str]) -> error::Result<Self>
+    fn from_raw(
+        raw: &RawMessage,
+        raw_key: Option<&[u8; 256]>,
+        version: ProtocolVersion,
+        _enum_variant_ids: &[&'static str],
+    ) -> error::Result<Self>
         where T: DeserializeOwned
     {
         Self::from_raw(raw, raw_key.as_ref().unwrap(), version)  // FIXME
