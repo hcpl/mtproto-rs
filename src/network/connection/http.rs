@@ -12,7 +12,9 @@ use tokio_tcp::TcpStream;
 
 use ::async_io;
 use ::error::{self, ErrorKind};
-use ::network::connection::common::{self, SERVER_ADDRS, Connection, RecvConnection, SendConnection};
+use ::network::connection::common::{
+    self, DEFAULT_SERVER_ADDR, Connection, RecvConnection, SendConnection,
+};
 use ::network::state::State;
 use ::tl::TLObject;
 use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon, RawMessageSeedCommon};
@@ -36,7 +38,7 @@ impl ConnectionHttp {
     pub fn with_default_server()
         -> impl Future<Item = ConnectionHttp, Error = error::Error>
     {
-        Self::connect(SERVER_ADDRS[0])
+        Self::connect(*DEFAULT_SERVER_ADDR)
     }
 
     pub fn send_plain<T>(self, state: State, send_data: T)

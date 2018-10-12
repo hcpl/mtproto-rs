@@ -14,7 +14,7 @@ use tokio_timer;
 
 use ::error::{self, ErrorKind};
 use ::network::{
-    connection::{SERVER_ADDRS, Connection},
+    connection::{DEFAULT_SERVER_ADDR, Connection},
     state::State,
 };
 use ::protocol::ProtocolVersion;
@@ -23,11 +23,11 @@ use ::tl::TLObject;
 use ::tl::message::{Message, RawMessage};
 
 
+const DEFAULT_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V2;
 const DEFAULT_RETRIES: usize = 5;
-const DEFAULT_RETRIES_DELAY_MILLIS: u64 = 50;
+const DEFAULT_RETRY_DELAY_MILLIS: u64 = 50;
 
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SenderBuilder {
     version: Option<ProtocolVersion>,
     server_addr: Option<SocketAddr>,
@@ -58,10 +58,10 @@ impl SenderBuilder {
 
     pub fn build(&self) -> SenderDisconnected {
         SenderDisconnected {
-            state: State::new(self.version.unwrap_or(ProtocolVersion::V2)),
-            server_addr: self.server_addr.unwrap_or(SERVER_ADDRS[0]),
+            state: State::new(self.version.unwrap_or(DEFAULT_PROTOCOL_VERSION)),
+            server_addr: self.server_addr.unwrap_or(*DEFAULT_SERVER_ADDR),
             retries: self.retries.unwrap_or(DEFAULT_RETRIES),
-            retry_delay_millis: self.retry_delay_millis.unwrap_or(DEFAULT_RETRIES_DELAY_MILLIS),
+            retry_delay_millis: self.retry_delay_millis.unwrap_or(DEFAULT_RETRY_DELAY_MILLIS),
         }
     }
 }
@@ -88,7 +88,8 @@ pub struct SenderConnected {
 
 impl SenderDisconnected {
     pub fn connect<C>(self) -> impl Future<Item = SenderConnected, Error = error::Error>
-        where C: Connection,
+    where
+        C: Connection,
     {
         let Self { state, server_addr, retries, retry_delay_millis } = self;
 
@@ -162,8 +163,7 @@ fn chain_retryable<Fut, S>(
     merge_error: fn(S, error::Error) -> Fut::Error,
     retries: usize,
     retry_delay_millis: u64,
-)
-    -> impl Future<Item = Fut::Item, Error = Fut::Error>
+) -> impl Future<Item = Fut::Item, Error = Fut::Error>
 where
     Fut: Future,
 {
@@ -307,7 +307,7 @@ impl SenderConnected {
                     },
                     None => futures::future::Loop::Break((sender_connd, None)),
                 }
-            }).map_err(|()| unimplemented!())
+            }).map_err(|()| unimplemented!())  // FIXME
         }))
     }
 
