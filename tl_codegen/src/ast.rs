@@ -357,7 +357,7 @@ impl Constructor {
                 ident: syn::Ident::new(field.name.clone().unwrap()), // FIXME
                 bounds: vec![
                     syn::parse_ty_param_bound(quote! {
-                        ::rpc::RpcFunction
+                        ::network::rpc::RpcFunction
                     }.as_str()).unwrap(),
                     syn::parse_ty_param_bound(quote! {
                         ::serde::Serialize
@@ -557,7 +557,7 @@ impl Constructor {
             }
         }.as_str()).unwrap();
         let rpc_function_impl_item = syn::parse_item(quote! {
-            impl #syn_function_generics ::rpc::RpcFunction for #name<#(#generic_types2),*> {
+            impl #syn_function_generics ::network::rpc::RpcFunction for #name<#(#generic_types2),*> {
                 type Reply = #output_ty;
             }
         }.as_str()).unwrap();

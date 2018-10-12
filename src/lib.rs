@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "177"]
+#![recursion_limit = "169"]
 
 #[macro_use]
 extern crate arrayref;
@@ -8,7 +8,6 @@ extern crate byteorder;
 extern crate cfg_if;
 extern crate chrono;
 extern crate crc;
-extern crate envy;
 extern crate erased_serde;
 #[macro_use]
 extern crate error_chain;
@@ -34,7 +33,6 @@ extern crate tokio_executor;
 extern crate tokio_io;
 extern crate tokio_tcp;
 extern crate tokio_timer;
-extern crate toml;
 
 cfg_if! {
     if #[cfg(feature = "non-openssl-impls")] {
@@ -76,7 +74,6 @@ pub mod error;
 pub mod manual_types;
 pub mod network;
 pub mod protocol;
-pub mod rpc;
 pub mod tl;
 
 // Use this hack because `include!` and top-level inner attributes don't mix well

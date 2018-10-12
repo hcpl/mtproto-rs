@@ -7,13 +7,11 @@ error_chain! {
 
     foreign_links {
         Base64Decode(::base64::DecodeError) #[cfg(feature = "non-openssl-impls")];
-        Envy(::envy::Error);
         FromUtf8(::std::string::FromUtf8Error);
         Nom(::nom::Err<Vec<u8>>) #[cfg(feature = "non-openssl-impls")];
         Io(::std::io::Error);
         OpenSsl(::openssl::error::ErrorStack) #[cfg(feature = "openssl")];
         TokioTimer(::tokio_timer::Error);
-        TomlDeserialize(::toml::de::Error);
         Utf8(::std::str::Utf8Error);
     }
 

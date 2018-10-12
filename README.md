@@ -20,12 +20,12 @@ Currently implemented and planned features include:
       (handled by [`serde_mtproto`][serde_mtproto_repo])
 - [ ] Encryption facilities which enforce
       [security guidelines][mtproto_security_guidelines]
-- [ ] Key exchange
+- [x] Key exchange
 - [ ] Seamless RPC:
     * Schema functions are modeled as structs
     * Sending requests and receiving responses are automatically
       provided by associated methods
-- [ ] Handling sessions and messages
+- [x] Handling connections and messages
 
 [tl_codegen_code]: https://github.com/Connicpu/mtproto-rs/tree/master/tl_codegen
 [serde_mtproto_repo]: https://github.com/hcpl/serde_mtproto
@@ -42,7 +42,7 @@ Fetches authorization key over TCP and HTTP.
 TCP connection supports 3 modes: abridged, intermediate and full (this example uses all three),
 while HTTP only has 1 mode.
 
-Based on [tokio](https://tokio.rs) and [hyper](https://hyper.rs).
+Based on [tokio](https://tokio.rs).
 
 ```sh
 $ cargo run --example auth

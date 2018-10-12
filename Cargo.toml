@@ -22,7 +22,6 @@ chrono = "0.4"
 crc = "1.8"
 der-parser = { version = "1.0", optional = true }
 digest = { version = "0.8", optional = true }
-envy = "0.3"
 erased-serde = "0.3"
 error-chain = "0.12"
 flate2 = "1.0"
@@ -46,7 +45,6 @@ tokio-executor = "0.1"
 tokio-io = "0.1"
 tokio-tcp = "0.1"
 tokio-timer = "0.2"
-toml = "0.4"
 
 [build-dependencies]
 env_logger = "0.5"

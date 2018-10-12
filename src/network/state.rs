@@ -2,8 +2,8 @@ use chrono::{Timelike, Utc};
 use rand;
 
 use ::error;
+use ::network::auth::AuthKey;
 use ::protocol::ProtocolVersion;
-use ::rpc::auth::AuthKey;
 use ::tl::dynamic::{ObjectType, TLObject};
 use ::tl::message::MessageCommon;
 

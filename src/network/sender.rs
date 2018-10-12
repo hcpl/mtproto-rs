@@ -14,11 +14,11 @@ use tokio_timer;
 
 use ::error::{self, ErrorKind};
 use ::network::{
+    auth,
     connection::{DEFAULT_SERVER_ADDR, Connection},
     state::State,
 };
 use ::protocol::ProtocolVersion;
-use ::rpc::auth;
 use ::tl::TLObject;
 use ::tl::message::{Message, RawMessage};
 
