@@ -3,7 +3,9 @@ extern crate env_logger;
 extern crate error_chain;
 #[macro_use]
 extern crate log;
-extern crate tl_codegen;
+extern crate quote;
+extern crate tl_lang_syn;
+extern crate tl_lang_rust_interop;
 
 
 use std::env;
@@ -12,12 +14,15 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use quote::ToTokens;
+
 
 mod error {
     error_chain! {
         foreign_links {
             Io(::std::io::Error);
             SetLogger(::log::SetLoggerError);
+            TlLangSynParse(::tl_lang_syn::error::ParseError);
             Var(::std::env::VarError);
         }
     }
@@ -54,8 +59,10 @@ fn main() -> error::Result<()> {
     env_logger::try_init()?;
 
     let input = collect_input()?;
-    let code = tl_codegen::generate_code_for(&input);
-    debug!("Code size: {} bytes", code.as_str().len());
+    let parse_tree = tl_lang_syn::parse_file_str(&input)?;
+    let schema = tl_lang_rust_interop::Schema::from_tl_file(&parse_tree);
+    let code = schema.into_token_stream().to_string();
+    debug!("Code size: {} bytes", code.len());
 
     let rust_schema_file = Path::new(&env::var("OUT_DIR")?).join(RUST_SCHEMA_FILE);
     File::create(&rust_schema_file)?.write_all(code.as_str().as_bytes())?;

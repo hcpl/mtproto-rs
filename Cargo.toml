@@ -28,7 +28,7 @@ flate2 = "1.0"
 futures = "0.1"
 lazy_static = "1.0"
 log = "0.4"
-nom = { version = "4.1", optional = true }
+nom = { version = "4.0", optional = true }
 num-bigint = { version = "0.2", features = ["rand"], optional = true }
 num-traits = "0.2"
 openssl = { version = "0.10", optional = true }
@@ -36,8 +36,8 @@ rand = { version = "0.5", features = ["i128_support"] }
 serde = "1.0"
 serde_bytes = "0.10"
 serde_derive = "1.0"
-serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "e24cc59" }
-serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "e24cc59" }
+serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "59d3461" }
+serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "59d3461" }
 sha-1 = { version = "0.8", optional = true }
 sha2 = { version = "0.8", optional = true }
 state_machine_future = { git = "https://github.com/hcpl/state_machine_future", rev = "dc98d89" }
@@ -50,7 +50,9 @@ tokio-timer = "0.2"
 env_logger = "0.5"
 error-chain = "0.12"
 log = "0.4"
-tl_codegen = { path = "tl_codegen" }
+quote = "0.6"
+tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "c078618" }
+tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "c078618" }
 
 [dev-dependencies]
 dotenv = "0.13"

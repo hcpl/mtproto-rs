@@ -19,7 +19,7 @@ use ::network::{
     connection::Connection,
     state::State,
 };
-use ::schema::{functions, types};
+use ::schema::{constructors, functions, types};
 use ::utils::{
     little_endian_i128_from_array,
     little_endian_i128_into_array,
@@ -129,61 +129,65 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
 
         info!("Received PQ response: {:?}", res_pq);
 
-        tryc!(check_nonce(nonce, res_pq.nonce));
+        match res_pq {
+            types::ResPQ::resPQ(res_pq) => {
+                tryc!(check_nonce(nonce, res_pq.nonce));
 
-        let pq_u64 = BigEndian::read_u64(&res_pq.pq);
-        debug!("Decomposing pq = {}...", pq_u64);
-        let (p_u32, q_u32) = tryc!(factor::decompose_pq(pq_u64));
-        debug!("Decomposed p = {}, q = {}", p_u32, q_u32);
-        let u32_to_vec = |num| {
-            let mut v = vec![0; 4];
-            BigEndian::write_u32(v.as_mut_slice(), num);
-            v
-        };
-        let p = u32_to_vec(p_u32);
-        let q = u32_to_vec(q_u32);
-        let new_nonce = rand::random();
+                let pq_u64 = BigEndian::read_u64(&res_pq.pq);
+                debug!("Decomposing pq = {}...", pq_u64);
+                let (p_u32, q_u32) = tryc!(factor::decompose_pq(pq_u64));
+                debug!("Decomposed p = {}, q = {}", p_u32, q_u32);
+                let u32_to_vec = |num| {
+                    let mut v = vec![0; 4];
+                    BigEndian::write_u32(v.as_mut_slice(), num);
+                    v
+                };
+                let p = u32_to_vec(p_u32);
+                let q = u32_to_vec(q_u32);
+                let new_nonce = rand::random();
 
-        let p_q_inner_data = Boxed::new(types::P_Q_inner_data::p_q_inner_data(types::p_q_inner_data {
-            pq: res_pq.pq.clone(),
-            p: p.clone().into(),
-            q: q.clone().into(),
-            nonce,
-            server_nonce: res_pq.server_nonce,
-            new_nonce,
-        }));
-        info!("PQ proof of work to be sent: {:#?}", &p_q_inner_data);
+                let p_q_inner_data = Boxed::new(types::P_Q_inner_data::p_q_inner_data(constructors::p_q_inner_data {
+                    pq: res_pq.pq.clone(),
+                    p: p.clone().into(),
+                    q: q.clone().into(),
+                    nonce,
+                    server_nonce: res_pq.server_nonce,
+                    new_nonce,
+                }));
+                info!("PQ proof of work to be sent: {:#?}", &p_q_inner_data);
 
-        let p_q_inner_data_serialized = tryc!(serde_mtproto::to_bytes(&p_q_inner_data));
-        debug!("Data bytes to send: {:?}", &p_q_inner_data_serialized);
-        let known_sha1_fingerprints = tryc!(rsa::KNOWN_RAW_KEYS.iter()
-            .map(|raw_key| {
-                let sha1_fingerprint = RsaPublicKey::new(raw_key)?.sha1_fingerprint()?;
-                Ok(sha1_fingerprint.iter().map(|b| format!("{:02x}", b)).collect::<String>())
-            })
-            .collect::<error::Result<Vec<_>>>());
-        debug!("Known public key SHA1 fingerprints: {:?}", known_sha1_fingerprints);
-        let known_fingerprints = tryc!(rsa::KNOWN_RAW_KEYS.iter()
-            .map(|raw_key| Ok(RsaPublicKey::new(raw_key)?.fingerprint()?))
-            .collect::<error::Result<Vec<_>>>());
-        debug!("Known public key fingerprints: {:?}", known_fingerprints);
-        let server_pk_fingerprints = res_pq.server_public_key_fingerprints.inner().as_slice();
-        debug!("Server public key fingerprints: {:?}", &server_pk_fingerprints);
-        let (rsa_public_key, fingerprint) = tryc!(rsa::find_first_key(server_pk_fingerprints));
-        debug!("RSA public key used: {:#?}", &rsa_public_key);
-        let encrypted_data = tryc!(rsa_public_key.encrypt(&p_q_inner_data_serialized));
-        debug!("Encrypted data: {:?}", encrypted_data.as_ref());
+                let p_q_inner_data_serialized = tryc!(serde_mtproto::to_bytes(&p_q_inner_data));
+                debug!("Data bytes to send: {:?}", &p_q_inner_data_serialized);
+                let known_sha1_fingerprints = tryc!(rsa::KNOWN_RAW_KEYS.iter()
+                    .map(|raw_key| {
+                        let sha1_fingerprint = RsaPublicKey::new(raw_key)?.sha1_fingerprint()?;
+                        Ok(sha1_fingerprint.iter().map(|b| format!("{:02x}", b)).collect::<String>())
+                    })
+                    .collect::<error::Result<Vec<_>>>());
+                debug!("Known public key SHA1 fingerprints: {:?}", known_sha1_fingerprints);
+                let known_fingerprints = tryc!(rsa::KNOWN_RAW_KEYS.iter()
+                    .map(|raw_key| Ok(RsaPublicKey::new(raw_key)?.fingerprint()?))
+                    .collect::<error::Result<Vec<_>>>());
+                debug!("Known public key fingerprints: {:?}", known_fingerprints);
+                let server_pk_fingerprints = res_pq.server_public_key_fingerprints.inner().as_slice();
+                debug!("Server public key fingerprints: {:?}", &server_pk_fingerprints);
+                let (rsa_public_key, fingerprint) = tryc!(rsa::find_first_key(server_pk_fingerprints));
+                debug!("RSA public key used: {:#?}", &rsa_public_key);
+                let encrypted_data = tryc!(rsa_public_key.encrypt(&p_q_inner_data_serialized));
+                debug!("Encrypted data: {:?}", encrypted_data.as_ref());
 
-        let req_dh_params = functions::req_DH_params {
-            nonce,
-            server_nonce: res_pq.server_nonce,
-            p: p.into(),
-            q: q.into(),
-            public_key_fingerprint: fingerprint,
-            encrypted_data: encrypted_data.to_vec().into(),
-        };
+                let req_dh_params = functions::req_DH_params {
+                    nonce,
+                    server_nonce: res_pq.server_nonce,
+                    p: p.into(),
+                    q: q.into(),
+                    public_key_fingerprint: fingerprint,
+                    encrypted_data: encrypted_data.to_vec().into(),
+                };
 
-        Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
+                Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
+            },
+        }
     }
 
     prepare_step2(input)
@@ -293,70 +297,73 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                 let (server_dh_inner_server_hash, server_dh_inner_bytes) =
                     server_dh_inner_decrypted.split_at(SHA1_HASH_LENGTH);
                 let (server_dh_inner, random_tail) =
-                    tryc!(serde_mtproto::from_bytes_reuse::<Boxed<types::Server_DH_inner_data>>(server_dh_inner_bytes, &[]));
+                    tryc!(serde_mtproto::from_bytes_reuse::<Boxed<types::Server_DH_inner_data>>(server_dh_inner_bytes, &["server_DH_inner_data"]));
 
                 let server_dh_inner_len = server_dh_inner_bytes.len() - random_tail.len();
                 let server_dh_inner_client_hash =
                     tryc!(sha1_from_bytes(&[&server_dh_inner_bytes[0..server_dh_inner_len]]));
                 tryc!(check_sha1(server_dh_inner_server_hash, &server_dh_inner_client_hash));
 
-                let server_dh_inner = server_dh_inner.into_inner();
-                tryc!(check_nonce(nonce, server_dh_inner.nonce));
-                tryc!(check_server_nonce(server_nonce, server_dh_inner.server_nonce));
+                match server_dh_inner.into_inner() {
+                    types::Server_DH_inner_data::server_DH_inner_data(server_dh_inner) => {
+                        tryc!(check_nonce(nonce, server_dh_inner.nonce));
+                        tryc!(check_server_nonce(server_nonce, server_dh_inner.server_nonce));
 
-                let (g_b, g_ab) = tryc!(calc_g_pows_bytes(
-                    server_dh_inner.g as u32,
-                    &server_dh_inner.g_a,
-                    &server_dh_inner.dh_prime,
-                ));
+                        let (g_b, g_ab) = tryc!(calc_g_pows_bytes(
+                            server_dh_inner.g as u32,
+                            &server_dh_inner.g_a,
+                            &server_dh_inner.dh_prime,
+                        ));
 
-                let client_dh_inner = Boxed::new(types::Client_DH_Inner_Data {
-                    nonce,
-                    server_nonce,
-                    retry_id: 0,  // TODO: actual retry ID
-                    g_b: g_b.into(),
-                });
+                        let client_dh_inner = Boxed::new(types::Client_DH_Inner_Data::client_DH_inner_data(constructors::client_DH_inner_data {
+                            nonce,
+                            server_nonce,
+                            retry_id: 0,  // TODO: actual retry ID
+                            g_b: g_b.into(),
+                        }));
 
-                let client_dh_inner_len = tryc!(client_dh_inner.size_hint());
-                let random_tail_len = (16 - ((SHA1_HASH_LENGTH + client_dh_inner_len) % 16)) % 16;
-                let mut client_dh_inner_to_encrypt =
-                    vec![0; SHA1_HASH_LENGTH + client_dh_inner_len + random_tail_len];
+                        let client_dh_inner_len = tryc!(client_dh_inner.size_hint());
+                        let random_tail_len = (16 - ((SHA1_HASH_LENGTH + client_dh_inner_len) % 16)) % 16;
+                        let mut client_dh_inner_to_encrypt =
+                            vec![0; SHA1_HASH_LENGTH + client_dh_inner_len + random_tail_len];
 
-                {
-                    let (client_dh_inner_hash, client_dh_inner_rest) =
-                        client_dh_inner_to_encrypt.split_at_mut(SHA1_HASH_LENGTH);
-                    let (client_dh_inner_bytes, random_tail) =
-                        client_dh_inner_rest.split_at_mut(client_dh_inner_len);
-                    tryc!(serde_mtproto::to_writer(&mut *client_dh_inner_bytes, &client_dh_inner));
-                    let hash_bytes = tryc!(sha1_from_bytes(&[client_dh_inner_bytes]));
-                    client_dh_inner_hash.copy_from_slice(&*hash_bytes);
-                    rand::thread_rng().fill_bytes(random_tail);
+                        {
+                            let (client_dh_inner_hash, client_dh_inner_rest) =
+                                client_dh_inner_to_encrypt.split_at_mut(SHA1_HASH_LENGTH);
+                            let (client_dh_inner_bytes, random_tail) =
+                                client_dh_inner_rest.split_at_mut(client_dh_inner_len);
+                            tryc!(serde_mtproto::to_writer(&mut *client_dh_inner_bytes, &client_dh_inner));
+                            let hash_bytes = tryc!(sha1_from_bytes(&[client_dh_inner_bytes]));
+                            client_dh_inner_hash.copy_from_slice(&*hash_bytes);
+                            rand::thread_rng().fill_bytes(random_tail);
+                        }
+
+                        let encrypted_data = crypto::aes::aes_ige_encrypt(
+                            &tmp_aes_params,
+                            &client_dh_inner_to_encrypt,
+                        ).into();
+
+                        let set_client_dh_params = functions::set_client_DH_params {
+                            nonce,
+                            server_nonce,
+                            encrypted_data,
+                        };
+
+                        let auth_key_bytes = g_ab;
+                        assert_eq!(auth_key_bytes.len(), 256);
+
+                        // Hopefully server will use 64-bit integers before Year 2038
+                        // Problem kicks in
+                        let local_timestamp = Utc::now().timestamp() as i32;
+                        let time_offset = server_dh_inner.server_time - local_timestamp;
+
+                        Ok((
+                            conn, state, set_client_dh_params,
+                            nonce, server_nonce, new_nonce,
+                            auth_key_bytes, time_offset,
+                        ))
+                    },
                 }
-
-                let encrypted_data = crypto::aes::aes_ige_encrypt(
-                    &tmp_aes_params,
-                    &client_dh_inner_to_encrypt,
-                ).into();
-
-                let set_client_dh_params = functions::set_client_DH_params {
-                    nonce,
-                    server_nonce,
-                    encrypted_data,
-                };
-
-                let auth_key_bytes = g_ab;
-                assert_eq!(auth_key_bytes.len(), 256);
-
-                // Hopefully server will use 64-bit integers before Year 2038
-                // Problem kicks in
-                let local_timestamp = Utc::now().timestamp() as i32;
-                let time_offset = server_dh_inner.server_time - local_timestamp;
-
-                Ok((
-                    conn, state, set_client_dh_params,
-                    nonce, server_nonce, new_nonce,
-                    auth_key_bytes, time_offset,
-                ))
             },
         }
     }
