@@ -50,9 +50,10 @@ tokio-timer = "0.2"
 env_logger = "0.5"
 error-chain = "0.12"
 log = "0.4"
-quote = "0.6"
-tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "c078618" }
-tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "c078618" }
+proc-macro2 = "0.4.4"
+quote = "0.6.3"
+tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "a5d573f" }
+tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "a5d573f" }
 
 [dev-dependencies]
 dotenv = "0.13"
