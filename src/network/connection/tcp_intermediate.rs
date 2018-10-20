@@ -454,7 +454,7 @@ where
 
         let len = LittleEndian::read_u32(&bytes_len);
         async_io::read_exact(recv, vec![0; len as usize]) // FIXME: use safe cast
-    }).map_err(|(recv, e)| (recv, e.into()))
+    }).map_err(|(recv, e)| (recv, common::convert_read_io_error(e)))
 }
 
 fn prepare_send_data<R>(raw_message: &R, is_first_request: &mut bool) -> error::Result<Vec<u8>>

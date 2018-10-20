@@ -136,6 +136,7 @@ where
         |server_addr| C::connect(server_addr).map_err(move |e| (server_addr, e)),
         |(server_addr, e)| (server_addr, e),
         |server_addr, e| (server_addr, e),
+        |(_, e)| e.kind(),
         retries,
         retry_delay_millis,
     ).map_err(|(_, e)| e)
@@ -151,6 +152,7 @@ where
         |(state, conn)| auth::auth_with_state(state, conn),
         |(state, conn, e)| ((state, conn), e),
         |(state, conn), e| (state, conn, e),
+        |(_, _, e)| e.kind(),
         retries,
         retry_delay_millis,
     )
@@ -161,6 +163,7 @@ fn chain_retryable<Fut, S>(
     new_fut: fn(S) -> Fut,
     split_error: fn(Fut::Error) -> (S, error::Error),
     merge_error: fn(S, error::Error) -> Fut::Error,
+    get_error_kind: fn(&Fut::Error) -> &error::ErrorKind,
     retries: usize,
     retry_delay_millis: u64,
 ) -> impl Future<Item = Fut::Item, Error = Fut::Error>
@@ -172,20 +175,22 @@ where
     future::loop_fn((0, initial_state), move |(retry, state)| {
         new_fut(state).then(move |res| match res {
             Ok(value) => future::Either::A(future::ok(future::Loop::Break(value))),
-            // FIXME: collect all errors from all failed attempts
-            Err(error) => if retry < retries {
-                let duration = Duration::from_millis(retry_delay_millis);
-                let (new_state, cause) = split_error(error);
+            Err(error) => match get_error_kind(&error) {
+                // Only retry for connections that received a TCP packet with RST flag
+                ErrorKind::ReceivedPacketWithRst if retry < retries => {
+                    let duration = Duration::from_millis(retry_delay_millis);
+                    let (new_state, cause) = split_error(error);
 
-                future::Either::B(tokio_timer::sleep(duration).then(move |res| match res {
-                    Ok(()) => Ok(future::Loop::Continue((retry + 1, new_state))),
-                    Err(e) => {
-                        let chained = cause.chain_err(|| ErrorKind::TokioTimer(e));
-                        Err(merge_error(new_state, chained))
-                    },
-                }))
-            } else {
-                future::Either::A(future::err(error))
+                    future::Either::B(tokio_timer::sleep(duration).then(move |res| match res {
+                        Ok(()) => Ok(future::Loop::Continue((retry + 1, new_state))),
+                        Err(e) => {
+                            let chained = cause.chain_err(|| ErrorKind::TokioTimer(e));
+                            Err(merge_error(new_state, chained))
+                        },
+                    }))
+                },
+                // Other errors should be propagated
+                _ => future::Either::A(future::err(error)),
             },
         })
     })

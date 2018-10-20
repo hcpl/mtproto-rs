@@ -466,7 +466,7 @@ where
     }).and_then(|(recv, len)| {
         debug!("Got length from server: recv = {:?}, length = {}", recv, len);
         async_io::read_exact(recv, vec![0; len])
-    }).map_err(|(recv, e)| (recv, e.into()))
+    }).map_err(|(recv, e)| (recv, common::convert_read_io_error(e)))
 }
 
 fn prepare_send_data<R>(raw_message: &R, is_first_request: &mut bool) -> error::Result<Vec<u8>>

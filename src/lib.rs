@@ -1,5 +1,5 @@
 // `error_chain!` can nest quite deeply
-#![recursion_limit = "169"]
+#![recursion_limit = "172"]
 
 #[macro_use]
 extern crate arrayref;

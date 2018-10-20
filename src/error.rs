@@ -100,6 +100,11 @@ error_chain! {
                      (expected {}, found {})", expected, found)
         }
 
+        ReceivedPacketWithRst {
+            description("Received a TCP packet with a reset (RST) flag")
+            display("Received a TCP packet with a reset (RST) flag")
+        }
+
         TcpErrorCode(code: i32) {
             description("RPC returned an error code")
             display("RPC returned a {} error code", code)

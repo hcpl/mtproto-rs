@@ -1,4 +1,6 @@
+use std::error::Error as StdError;
 use std::fmt;
+use std::io;
 use std::net::SocketAddr;
 
 use futures::Future;
@@ -112,5 +114,13 @@ where
         bail!(ErrorKind::BadTcpMessage(raw_message.size_hint()?))
     } else {
         N::from_raw(raw_message, state.auth_raw_key(), state.version, &[])
+    }
+}
+
+
+pub(super) fn convert_read_io_error(error: io::Error) -> error::Error {
+    match (error.kind(), error.get_ref().map(StdError::description)) {
+        (io::ErrorKind::UnexpectedEof, Some("early eof")) => ErrorKind::ReceivedPacketWithRst.into(),
+        _ => error.into(),
     }
 }

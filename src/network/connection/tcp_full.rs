@@ -461,7 +461,7 @@ where
         let _seq_no = LittleEndian::read_u32(&first_bytes[4..8]);
 
         async_io::read_exact(recv, vec![0; ulen - 8])
-            .map_err(|(recv, e)| (recv, e.into()))
+            .map_err(|(recv, e)| (recv, common::convert_read_io_error(e)))
             .and_then(move |(recv, last_bytes)| {
                 debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
                     last_bytes.len(), recv, last_bytes);

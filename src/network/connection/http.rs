@@ -480,8 +480,8 @@ where
                 body.len(), buf_recv, body);
 
             (buf_recv.into_inner(), body)
-        }).map_err(|(recv, e)| (recv, e))
-    }).map_err(|(buf_recv, e)| (buf_recv.into_inner(), e.into()))
+        })
+    }).map_err(|(buf_recv, e)| (buf_recv.into_inner(), common::convert_read_io_error(e)))
 }
 
 fn prepare_send_data<R>(raw_message: &R) -> error::Result<Vec<u8>>
