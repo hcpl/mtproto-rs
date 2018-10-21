@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::SocketAddr;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
@@ -16,6 +17,7 @@ use ::crypto::{
 use ::error::{self, ErrorKind};
 use ::manual_types::i256::I256;
 use ::network::{
+    common,
     connection::Connection,
     state::State,
 };
@@ -55,8 +57,10 @@ impl PartialEq for AuthKey {
 
 
 /// Combine all authorization steps defined below.
-pub fn auth_with_state<C: Connection>(state: State, conn: C)
+pub fn auth_with_state<C>(state: State, conn: C)
     -> impl Future<Item = (State, C), Error = (State, C, error::Error)>
+where
+    C: Connection,
 {
     futures::future::ok(Step1Input { state, conn })
         .and_then(auth_step1)
@@ -64,6 +68,37 @@ pub fn auth_with_state<C: Connection>(state: State, conn: C)
         .and_then(auth_step3)
         .and_then(auth_step4)
         .map_err(|(conn, state, e)| (state, conn, e))
+}
+
+pub fn connect_auth_with_state_retryable<C>(
+    state: State,
+    server_addr: SocketAddr,
+    retries: usize,
+    retry_delay_millis: u64,
+)
+    -> impl Future<Item = (State, C), Error = (State, error::Error)>
+where
+    C: Connection,
+{
+    common::chain_retryable(
+        (state, server_addr),
+        |(state, server_addr)| C::connect(server_addr).then(move |res| match res {
+            Err(e) => futures::future::Either::B(futures::future::err((state, server_addr, e))),
+            Ok(conn) => if state.auth_key.is_none() {
+                futures::future::Either::A(auth_with_state(state, conn)
+                    .map_err(move |(state, _conn, e)| (state, server_addr, e)))
+            } else {
+                warn!("User is already authenticated!");
+                // FIXME: Return "already authenticated" error here?
+                futures::future::Either::B(futures::future::ok((state, conn)))
+            },
+        }),
+        |(state, server_addr, e)| ((state, server_addr), e),
+        |(state, server_addr), e| (state, server_addr, e),
+        |(_, _, e)| e.kind(),
+        retries,
+        retry_delay_millis,
+    ).map_err(|(state, _server_addr, e)| (state, e))
 }
 
 struct Step1Input<C> {

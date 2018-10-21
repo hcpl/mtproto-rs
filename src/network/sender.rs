@@ -1,7 +1,6 @@
 use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use futures::{
     self, Future, Sink, Stream,
@@ -10,11 +9,10 @@ use futures::{
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_executor;
-use tokio_timer;
 
 use ::error::{self, ErrorKind};
 use ::network::{
-    auth,
+    auth::connect_auth_with_state_retryable,
     connection::{DEFAULT_SERVER_ADDR, Connection},
     state::State,
 };
@@ -93,18 +91,9 @@ impl SenderDisconnected {
     {
         let Self { state, server_addr, retries, retry_delay_millis } = self;
 
-        connect_retryable::<C>(server_addr, retries, retry_delay_millis).and_then(move |conn| {
-            if state.auth_key.is_none() {
-                futures::future::Either::A(
-                    auth_with_state_retryable(state, conn, retries, retry_delay_millis)
-                        .map_err(|(_, _, e)| e)
-                )
-            } else {
-                warn!("User is already authenticated!");
-                // FIXME: Return "already authenticated" error here?
-                futures::future::Either::B(futures::future::ok((state, conn)))
-            }
-        }).map(move |(state, conn)| {
+        connect_auth_with_state_retryable::<C>(
+            state, server_addr, retries, retry_delay_millis,
+        ).map_err(|(_, e)| e).map(move |(state, conn)| {
             let (send_conn, recv_conn) = conn.split();
             let (send_queue_send, send_queue_recv) = mpsc::unbounded();
             let (recv_queue_send, recv_queue_recv) = mpsc::unbounded();
@@ -124,76 +113,6 @@ impl SenderDisconnected {
             }
         })
     }
-}
-
-fn connect_retryable<C>(server_addr: SocketAddr, retries: usize, retry_delay_millis: u64)
-    -> impl Future<Item = C, Error = error::Error>
-where
-    C: Connection,
-{
-    chain_retryable(
-        server_addr,
-        |server_addr| C::connect(server_addr).map_err(move |e| (server_addr, e)),
-        |(server_addr, e)| (server_addr, e),
-        |server_addr, e| (server_addr, e),
-        |(_, e)| e.kind(),
-        retries,
-        retry_delay_millis,
-    ).map_err(|(_, e)| e)
-}
-
-fn auth_with_state_retryable<C>(state: State, conn: C, retries: usize, retry_delay_millis: u64)
-    -> impl Future<Item = (State, C), Error = (State, C, error::Error)>
-where
-    C: Connection,
-{
-    chain_retryable(
-        (state, conn),
-        |(state, conn)| auth::auth_with_state(state, conn),
-        |(state, conn, e)| ((state, conn), e),
-        |(state, conn), e| (state, conn, e),
-        |(_, _, e)| e.kind(),
-        retries,
-        retry_delay_millis,
-    )
-}
-
-fn chain_retryable<Fut, S>(
-    initial_state: S,
-    new_fut: fn(S) -> Fut,
-    split_error: fn(Fut::Error) -> (S, error::Error),
-    merge_error: fn(S, error::Error) -> Fut::Error,
-    get_error_kind: fn(&Fut::Error) -> &error::ErrorKind,
-    retries: usize,
-    retry_delay_millis: u64,
-) -> impl Future<Item = Fut::Item, Error = Fut::Error>
-where
-    Fut: Future,
-{
-    use futures::future;
-
-    future::loop_fn((0, initial_state), move |(retry, state)| {
-        new_fut(state).then(move |res| match res {
-            Ok(value) => future::Either::A(future::ok(future::Loop::Break(value))),
-            Err(error) => match get_error_kind(&error) {
-                // Only retry for connections that received a TCP packet with RST flag
-                ErrorKind::ReceivedPacketWithRst if retry < retries => {
-                    let duration = Duration::from_millis(retry_delay_millis);
-                    let (new_state, cause) = split_error(error);
-
-                    future::Either::B(tokio_timer::sleep(duration).then(move |res| match res {
-                        Ok(()) => Ok(future::Loop::Continue((retry + 1, new_state))),
-                        Err(e) => {
-                            let chained = cause.chain_err(|| ErrorKind::TokioTimer(e));
-                            Err(merge_error(new_state, chained))
-                        },
-                    }))
-                },
-                // Other errors should be propagated
-                _ => future::Either::A(future::err(error)),
-            },
-        })
-    })
 }
 
 impl SenderConnected {
