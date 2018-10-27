@@ -153,7 +153,7 @@ impl SenderConnected {
         self.disconnect().and_then(SenderDisconnected::connect::<C>)
     }
 
-    pub fn send<T>(mut self, request_data: T) -> error::Result<Self>
+    pub fn send<T>(&mut self, request_data: T) -> error::Result<()>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
@@ -163,18 +163,10 @@ impl SenderConnected {
         self.send_raw(raw_message)
     }
 
-    pub fn send_raw(self, raw_message: RawMessage) -> error::Result<Self> {
-        let Self {
-            state, server_addr, retries, retry_delay_millis,
-            send_queue_send, recv_queue_recv, pending_messages,
-        } = self;
-
-        send_queue_send.unbounded_send(raw_message)
-            .map(|()| Self {
-                state, server_addr, retries, retry_delay_millis,
-                send_queue_send, recv_queue_recv, pending_messages,
-            })
-            .map_err(|e| ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into())
+    pub fn send_raw(&self, raw_message: RawMessage) -> error::Result<()> {
+        self.send_queue_send.unbounded_send(raw_message).map_err(|e| {
+            ErrorKind::UnboundedSenderUnboundedSend(e.into_inner()).into()
+        })
     }
 
     pub fn recv<U>(self) -> impl Future<Item = (Self, Option<U>), Error = error::Error>
