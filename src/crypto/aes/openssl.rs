@@ -1,6 +1,6 @@
 use openssl::{aes, symm};
 
-use ::crypto::aes::common::AesParams;
+use crate::crypto::aes::common::AesParams;
 
 
 pub(crate) fn aes_ige_encrypt(aes_params: &AesParams, data_serialized: &[u8]) -> Vec<u8> {

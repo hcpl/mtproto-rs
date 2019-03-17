@@ -2,7 +2,7 @@ use std::ops;
 
 use openssl::hash;
 
-use ::error;
+use crate::error;
 
 
 #[derive(Debug)]

@@ -7,7 +7,7 @@ use digest::{
 use sha1::Sha1;
 use sha2::Sha256;
 
-use ::error;
+use crate::error;
 
 
 #[derive(Debug)]

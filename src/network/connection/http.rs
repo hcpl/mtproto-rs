@@ -3,21 +3,23 @@ use std::io::BufReader;
 use std::net::SocketAddr;
 use std::str;
 
+use error_chain::bail;
 use futures::{self, Future, Stream};
+use log::{debug, error, info};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
-use ::async_io;
-use ::error::{self, ErrorKind};
-use ::network::connection::common::{
+use crate::async_io;
+use crate::error::{self, ErrorKind};
+use crate::network::connection::common::{
     self, DEFAULT_SERVER_ADDR, Connection, RecvConnection, SendConnection,
 };
-use ::network::state::State;
-use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon, RawMessageSeedCommon};
+use crate::network::state::State;
+use crate::tl::TLObject;
+use crate::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon, RawMessageSeedCommon};
 
 
 pub struct ConnectionHttp {
@@ -202,19 +204,19 @@ impl Connection for ConnectionHttp {
     type RecvConnection = RecvConnectionHttp;
 
     fn connect(server_addr: SocketAddr)
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>
     {
         Box::new(Self::connect(server_addr))
     }
 
     fn with_default_server()
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>
     {
         Box::new(Self::with_default_server())
     }
 
     fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
@@ -223,7 +225,7 @@ impl Connection for ConnectionHttp {
     }
 
     fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
@@ -387,7 +389,7 @@ impl RecvConnectionHttp {
 
 impl SendConnection for SendConnectionHttp {
     fn send_plain<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
@@ -395,7 +397,7 @@ impl SendConnection for SendConnectionHttp {
     }
 
     fn send<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
@@ -403,7 +405,7 @@ impl SendConnection for SendConnectionHttp {
     }
 
     fn send_raw<R>(self, raw_message: R)
-        -> Box<Future<Item = Self, Error = (Self, R, error::Error)> + Send>
+        -> Box<dyn Future<Item = Self, Error = (Self, R, error::Error)> + Send>
     where
         R: RawMessageCommon,
     {
@@ -413,7 +415,7 @@ impl SendConnection for SendConnectionHttp {
 
 impl RecvConnection for RecvConnectionHttp {
     fn recv_plain<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -421,7 +423,7 @@ impl RecvConnection for RecvConnectionHttp {
     }
 
     fn recv<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -429,7 +431,7 @@ impl RecvConnection for RecvConnectionHttp {
     }
 
     fn recv_raw<S>(self)
-        -> Box<Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
     where
         S: RawMessageCommon,
     {
@@ -476,7 +478,7 @@ where
         (buf_recv, e)
     }).and_then(|(lines, len)| {
         async_io::read_exact(lines.into_inner(), vec![0; len]).map(|(buf_recv, body)| {
-            debug!("Received {} bytes from server: recv = {:?}, bytes = {:?}",
+            debug!("Received {} bytes from server: buffered recv = {:?}, bytes = {:?}",
                 body.len(), buf_recv, body);
 
             (buf_recv.into_inner(), body)

@@ -1,6 +1,7 @@
 [package]
 name = "mtproto"
 version = "0.0.1"
+edition = "2018"
 description = "MTProto protocol and schema implementation in Rust"
 authors = ["Connor Hilarides <connorcpu@live.com>"]
 license = "MIT OR Apache-2.0"
@@ -36,8 +37,8 @@ rand = { version = "0.5", features = ["i128_support"] }
 serde = "1.0"
 serde_bytes = "0.10"
 serde_derive = "1.0"
-serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "59d3461" }
-serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "59d3461" }
+serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
+serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
 sha-1 = { version = "0.8", optional = true }
 sha2 = { version = "0.8", optional = true }
 state_machine_future = "0.1.8"
@@ -52,8 +53,8 @@ error-chain = "0.12"
 log = "0.4"
 proc-macro2 = "0.4.4"
 quote = "0.6.3"
-tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "a5d573f" }
-tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "a5d573f" }
+tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e00d963" }
+tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e00d963" }
 
 [dev-dependencies]
 dotenv = "0.13"

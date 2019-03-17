@@ -1,28 +1,31 @@
 use std::fmt;
 use std::net::SocketAddr;
 
+use arrayref::{array_ref, mut_array_refs};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use chrono::Utc;
+use error_chain::bail;
 use futures::{self, Future, IntoFuture};
+use log::{debug, error, info, warn};
 use rand::{self, RngCore};
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
-use ::bigint::calc_g_pows_bytes;
-use ::crypto::{
+use crate::bigint::calc_g_pows_bytes;
+use crate::crypto::{
     self,
     factor,
     hash::sha1_from_bytes,
     rsa::{self, RsaPublicKey},
 };
-use ::error::{self, ErrorKind};
-use ::manual_types::i256::I256;
-use ::network::{
+use crate::error::{self, ErrorKind};
+use crate::manual_types::i256::I256;
+use crate::network::{
     common,
     connection::Connection,
     state::State,
 };
-use ::schema::{constructors, functions, types};
-use ::utils::{
+use crate::schema::{constructors, functions, types};
+use crate::utils::{
     little_endian_i128_from_array,
     little_endian_i128_into_array,
     little_endian_i256_into_array,
@@ -38,7 +41,7 @@ pub struct AuthKey {
 }
 
 impl fmt::Debug for AuthKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthKey")
             .field("raw", &&self.raw[..])
             .field("aux_hash", &self.aux_hash)

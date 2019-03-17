@@ -1,7 +1,7 @@
 use num_bigint::{BigUint, RandBigInt};
 use rand;
 
-use ::error;
+use crate::error;
 
 
 const BITS: usize = 2048;

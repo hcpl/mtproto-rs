@@ -3,16 +3,17 @@ use std::fmt;
 use base64;
 use byteorder::{ByteOrder, LittleEndian};
 use der_parser::{self, BitStringObject, DerObject, DerObjectContent};
+use log::debug;
 use nom;
 use num_bigint::BigUint;
 use serde_bytes::ByteBuf;
 use serde_mtproto;
 
-use ::crypto::{
+use crate::crypto::{
     hash::sha1_from_bytes,
     rsa::common,
 };
-use ::error::{self, ErrorKind};
+use crate::error::{self, ErrorKind};
 
 
 /// "Cooked" RSA key.
@@ -115,7 +116,7 @@ fn key_parse_der(decoded: &[u8; 294]) -> error::Result<(BigUint, BigUint)> {
     Ok((n, e))
 }
 
-fn parse_der_owned(i: &[u8]) -> error::Result<(&[u8], DerObject)> {
+fn parse_der_owned(i: &[u8]) -> error::Result<(&[u8], DerObject<'_>)> {
     der_parser::parse_der(i).map_err(|e| map_nom_err(e, ToOwned::to_owned).into())
 }
 
@@ -147,21 +148,21 @@ where
 // They are needed because we can't use `DerError` in `error-chain` as
 // `error-chain`-generated code requires `DerError: Error + Display`
 
-fn as_sequence<'a>(der_obj: &'a DerObject) -> error::Result<&'a Vec<DerObject<'a>>> {
+fn as_sequence<'a>(der_obj: &'a DerObject<'_>) -> error::Result<&'a Vec<DerObject<'a>>> {
     match der_obj.content {
         DerObjectContent::Sequence(ref s) => Ok(s),
         _ => unimplemented!(),
     }
 }
 
-fn as_bitstring_ref<'a>(der_obj: &'a DerObject) -> error::Result<&'a BitStringObject<'a>> {
+fn as_bitstring_ref<'a>(der_obj: &'a DerObject<'_>) -> error::Result<&'a BitStringObject<'a>> {
     match der_obj.content {
         DerObjectContent::BitString(_, ref b) => Ok(b),
         _ => unimplemented!(),
     }
 }
 
-fn as_integer<'a>(der_obj: &'a DerObject) -> error::Result<&'a [u8]> {
+fn as_integer<'a>(der_obj: &'a DerObject<'_>) -> error::Result<&'a [u8]> {
     match der_obj.content {
         DerObjectContent::Integer(ref b) => Ok(b),
         _ => unimplemented!(),
@@ -170,11 +171,11 @@ fn as_integer<'a>(der_obj: &'a DerObject) -> error::Result<&'a [u8]> {
 
 
 impl fmt::Debug for RsaPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct StrDebugAsDisplay<'a>(&'a str);
 
         impl<'a> fmt::Debug for StrDebugAsDisplay<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 fmt::Display::fmt(self.0, f)
             }
         }

@@ -10,7 +10,7 @@ use serde::ser::{Serialize, Serializer};
 use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
 use serde_mtproto::{self, Identifiable, MtProtoSized};
 
-use error::{self, ErrorKind};
+use crate::error::{self, ErrorKind};
 
 
 /// \[**IMPLEMENTATION DETAIL**]
@@ -22,11 +22,11 @@ use error::{self, ErrorKind};
 /// * https://stackoverflow.com/questions/30353462/how-to-clone-a-struct-storing-a-trait-object
 #[doc(hidden)]
 pub trait TLObjectCloneToBox {
-    fn clone_to_box(&self) -> Box<TLObject>;
+    fn clone_to_box(&self) -> Box<dyn TLObject>;
 }
 
 impl<T: Clone + TLObject + 'static> TLObjectCloneToBox for T {
-    fn clone_to_box(&self) -> Box<TLObject> {
+    fn clone_to_box(&self) -> Box<dyn TLObject> {
         Box::new(self.clone())
     }
 }
@@ -39,13 +39,13 @@ pub enum ObjectType { Type, Function }
 pub trait TLObject: Any + ErasedSerialize + Identifiable + MtProtoSized + TLObjectCloneToBox {
     fn object_type() -> ObjectType where Self: Sized;
 
-    fn as_any(&self) -> &Any where Self: Sized { self }
-    fn as_box_any(self: Box<Self>) -> Box<Any> where Self: Sized { self }
+    fn as_any(&self) -> &dyn Any where Self: Sized { self }
+    fn as_box_any(self: Box<Self>) -> Box<dyn Any> where Self: Sized { self }
 }
 
 // TLObject impls
 
-impl Serialize for TLObject {
+impl Serialize for dyn TLObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
@@ -53,15 +53,15 @@ impl Serialize for TLObject {
     }
 }
 
-impl fmt::Debug for TLObject {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl fmt::Debug for dyn TLObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("TLObject [trait object]")
     }
 }
 
 // &TLObject impls
 
-impl<'a> Identifiable for &'a TLObject {
+impl<'a> Identifiable for &'a dyn TLObject {
     fn all_type_ids() -> &'static [u32] {
         panic!("Cannot use static methods on trait objects")
     }
@@ -71,23 +71,23 @@ impl<'a> Identifiable for &'a TLObject {
     }
 
     fn type_id(&self) -> u32 {
-        (**self).type_id()
+        Identifiable::type_id(&**self)
     }
 
     fn enum_variant_id(&self) -> Option<&'static str> {
-        (**self).enum_variant_id()
+        Identifiable::enum_variant_id(&**self)
     }
 }
 
 // Box<TLObject> impls
 
-impl Clone for Box<TLObject> {
-    fn clone(&self) -> Box<TLObject> {
+impl Clone for Box<dyn TLObject> {
+    fn clone(&self) -> Box<dyn TLObject> {
         self.clone_to_box()
     }
 }
 
-impl Identifiable for Box<TLObject> {
+impl Identifiable for Box<dyn TLObject> {
     fn all_type_ids() -> &'static [u32] {
         panic!("Cannot use static methods on trait objects")
     }
@@ -97,11 +97,11 @@ impl Identifiable for Box<TLObject> {
     }
 
     fn type_id(&self) -> u32 {
-        (**self).type_id()
+        Identifiable::type_id(&**self)
     }
 
     fn enum_variant_id(&self) -> Option<&'static str> {
-        (**self).enum_variant_id()
+        Identifiable::enum_variant_id(&**self)
     }
 }
 
@@ -139,17 +139,17 @@ impl<T: Clone + Serialize + TLObject> TLObject for Vec<T> {
 }
 
 
-pub(crate) type TLConstructorType = Box<Fn(&mut ErasedDeserializer) -> Result<Box<TLObject>, erased_serde::Error>>;
+pub(crate) type TLConstructorType = Box<dyn Fn(&mut dyn ErasedDeserializer<'_>) -> Result<Box<dyn TLObject>, erased_serde::Error>>;
 
 /// A single TL constructor body (i.e. without its id).
 pub struct TLConstructor(TLConstructorType);
 
 impl fmt::Debug for TLConstructor {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct DummyForDebug;
 
         impl fmt::Debug for DummyForDebug {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("TL constructor [boxed closure]")
             }
         }
@@ -172,7 +172,7 @@ impl TLConstructorsMap {
     pub fn add<T: TLObject + DeserializeOwned>(&mut self, type_id: u32) {
         self.0.insert(type_id, TLConstructor(Box::new(|deserializer| {
             erased_serde::deserialize::<T>(deserializer)
-                .map(|obj| Box::new(obj) as Box<TLObject>)
+                .map(|obj| Box::new(obj) as Box<dyn TLObject>)
         })));
     }
 
@@ -182,9 +182,9 @@ impl TLConstructorsMap {
 }
 
 impl<'de> DeserializeSeed<'de> for TLConstructorsMap {
-    type Value = Box<TLObject>;
+    type Value = Box<dyn TLObject>;
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Box<TLObject>, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<Box<dyn TLObject>, D::Error>
         where D: Deserializer<'de>
     {
         fn errconv<E: DeError>(kind: ErrorKind) -> E {
@@ -194,21 +194,21 @@ impl<'de> DeserializeSeed<'de> for TLConstructorsMap {
         struct BoxTLObjectVisitor(TLConstructorsMap);
 
         impl<'de> de::Visitor<'de> for BoxTLObjectVisitor {
-            type Value = Box<TLObject>;
+            type Value = Box<dyn TLObject>;
 
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("a boxed dynamically-typed value")
             }
 
-            fn visit_seq<A>(self, mut seq: A) -> Result<Box<TLObject>, A::Error>
+            fn visit_seq<A>(self, mut seq: A) -> Result<Box<dyn TLObject>, A::Error>
                 where A: de::SeqAccess<'de>
             {
                 struct BoxTLObjectSeed(TLConstructorsMap, u32);
 
                 impl<'de> DeserializeSeed<'de> for BoxTLObjectSeed {
-                    type Value = Box<TLObject>;
+                    type Value = Box<dyn TLObject>;
 
-                    fn deserialize<D>(self, deserializer: D) -> Result<Box<TLObject>, D::Error>
+                    fn deserialize<D>(self, deserializer: D) -> Result<Box<dyn TLObject>, D::Error>
                         where D: Deserializer<'de>
                     {
                         let ctor = &(self.0).0.get(&self.1)

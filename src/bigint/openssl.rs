@@ -1,6 +1,6 @@
 use openssl::bn;
 
-use ::error;
+use crate::error;
 
 
 pub(crate) fn calc_g_pows_bytes(

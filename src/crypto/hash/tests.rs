@@ -1,4 +1,4 @@
-use ::crypto::hash::{openssl, rust_crypto};
+use crate::crypto::hash::{openssl, rust_crypto};
 
 
 // For syncing with `EXPECTED` arrays

@@ -1,3 +1,6 @@
+use cfg_if::cfg_if;
+
+
 cfg_if! {
     // Prefer non-OpenSSL implementations even if OpenSSL ones exist
     if #[cfg(feature = "non-openssl-impls")] {

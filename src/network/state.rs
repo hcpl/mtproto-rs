@@ -1,11 +1,11 @@
 use chrono::{Timelike, Utc};
 use rand;
 
-use ::error;
-use ::network::auth::AuthKey;
-use ::protocol::ProtocolVersion;
-use ::tl::dynamic::{ObjectType, TLObject};
-use ::tl::message::MessageCommon;
+use crate::error;
+use crate::network::auth::AuthKey;
+use crate::protocol::ProtocolVersion;
+use crate::tl::dynamic::{ObjectType, TLObject};
+use crate::tl::message::MessageCommon;
 
 
 #[derive(Clone, Debug)]

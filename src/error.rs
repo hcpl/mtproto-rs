@@ -1,4 +1,17 @@
 //! Error handling related to this crate.
+//
+// Temporary fix for `std::error::Error::cause()` usage in `error_chain!`-generated code
+// Should be resolved upstream in <https://github.com/rust-lang-nursery/error-chain/pull/255>
+#![allow(deprecated)]
+
+use error_chain::{
+    error_chain,
+    error_chain_processing,
+    impl_error_chain_kind,
+    impl_error_chain_processed,
+    impl_extract_backtrace,
+};
+
 
 error_chain! {
     links {
@@ -141,7 +154,7 @@ error_chain! {
         }
 
         NewNonceHashMismatch(
-            expected_new_nonce: ::manual_types::i256::I256,
+            expected_new_nonce: crate::manual_types::i256::I256,
             expected_hash: i128,
             found_hash: i128
         ) {
@@ -153,7 +166,7 @@ error_chain! {
         }
 
         NewNonceDerivedHashMismatch(
-            expected_new_nonce: ::manual_types::i256::I256,
+            expected_new_nonce: crate::manual_types::i256::I256,
             marker: u8,
             aux_hash: i64,
             found_hash: i128
@@ -185,14 +198,14 @@ error_chain! {
             display("failed to poll an unbounded receiver")
         }
 
-        UnboundedSenderPollComplete(raw_message: ::tl::message::RawMessage) {
+        UnboundedSenderPollComplete(raw_message: crate::tl::message::RawMessage) {
             description("failed to poll an unbounded sender of raw messages to completion")
             display(
                 "failed to poll an unbounded sender of raw messages to completion: SendError({:?})",
                 raw_message)
         }
 
-        UnboundedSenderUnboundedSend(raw_message: ::tl::message::RawMessage) {
+        UnboundedSenderUnboundedSend(raw_message: crate::tl::message::RawMessage) {
             description("failed to send a raw message into an unbounded sender")
             display(
                 "failed to send a raw message into an unbounded sender: SendError({:?})",

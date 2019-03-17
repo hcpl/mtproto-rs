@@ -1,26 +1,26 @@
-extern crate env_logger;
-#[macro_use]
-extern crate error_chain;
-#[macro_use]
-extern crate log;
-extern crate proc_macro2;
-#[macro_use]
-extern crate quote;
-extern crate tl_lang_syn;
-extern crate tl_lang_rust_interop;
-
-
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use log::debug;
 use quote::ToTokens;
 use tl_lang_rust_interop::token_generator::TokenGenerator;
 
 
+// Temporary fix for `std::error::Error::cause()` usage in `error_chain!`-generated code
+// Should be resolved upstream in <https://github.com/rust-lang-nursery/error-chain/pull/255>
+#[allow(deprecated)]
 mod error {
+    use error_chain::{
+        error_chain,
+        error_chain_processing,
+        impl_error_chain_kind,
+        impl_error_chain_processed,
+        impl_extract_backtrace,
+    };
+
     error_chain! {
         foreign_links {
             Io(::std::io::Error);
@@ -39,7 +39,7 @@ const RUST_SCHEMA_FILE:    &'static str = "./schema.rs";
 fn collect_input() -> error::Result<String> {
     let mut tl_files = BufReader::new(File::open(TL_SCHEMA_LIST_FILE)?).lines().filter_map(|line| {
         match line {
-            Ok(ref line) if line.trim_left().starts_with("//") => None,  // This line is a comment
+            Ok(ref line) if line.trim_start().starts_with("//") => None,  // This line is a comment
             Ok(filename) => Some(Ok(Path::new(TL_SCHEMA_DIR).join(filename))),
             Err(e) => Some(Err(e)),  // Do not ignore errors
         }
@@ -62,9 +62,7 @@ fn collect_input() -> error::Result<String> {
 mod transformations {
     use std::iter;
 
-    use proc_macro2;
-    use quote::{ToTokens, TokenStreamExt};
-    use tl_lang_syn;
+    use quote::{ToTokens, TokenStreamExt, quote};
     use tl_lang_rust_interop::{
         token_generator::TokenGenerator,
 
@@ -122,7 +120,7 @@ mod transformations {
         });
 
         tokens.append_all(quote! {
-            #(::#segments)* #args
+            crate#(::#segments)* #args
         });
     }
 
@@ -310,7 +308,7 @@ mod transformations {
             TypeBuiltIn::Int    => quote!(i32),
             TypeBuiltIn::Long   => quote!(i64),
             TypeBuiltIn::Int128 => quote!(i128),
-            TypeBuiltIn::Int256 => quote!(::manual_types::i256::I256),
+            TypeBuiltIn::Int256 => quote!(crate::manual_types::i256::I256),
             TypeBuiltIn::Double => quote!(f64),
             TypeBuiltIn::Bytes  => quote!(::serde_bytes::ByteBuf),
             TypeBuiltIn::String => quote!(String),
@@ -378,16 +376,16 @@ mod transformations {
         tokens.append_all(quote! {
             #[derive(
                 Clone, Debug, PartialEq,
-                Serialize, Deserialize,
-                MtProtoIdentifiable, MtProtoSized,
+                serde_derive::Serialize, serde_derive::Deserialize,
+                serde_mtproto_derive::MtProtoIdentifiable, serde_mtproto_derive::MtProtoSized,
             )]
             pub enum #name {
                 #(#constructor_variants,)*
             }
 
-            impl ::tl::TLObject for #name {
-                fn object_type() -> ::tl::dynamic::ObjectType {
-                    ::tl::dynamic::ObjectType::Type
+            impl crate::tl::TLObject for #name {
+                fn object_type() -> crate::tl::dynamic::ObjectType {
+                    crate::tl::dynamic::ObjectType::Type
                 }
             }
         });
@@ -425,7 +423,7 @@ mod transformations {
                         proc_macro2::Span::call_site(),
                     ));
 
-                quote!(#(::#segments_before_last)* ::updates_)
+                quote!(crate#(::#segments_before_last)*::updates_)
             },
             _ => TokenGenerator::new(struct_path, path_to_tokens).into_token_stream(),
         };
@@ -562,8 +560,8 @@ mod transformations {
         tokens.append_all(quote! {
             #[derive(
                 Clone, Debug, PartialEq,
-                Serialize, Deserialize,
-                MtProtoSized,
+                serde_derive::Serialize, serde_derive::Deserialize,
+                serde_mtproto_derive::MtProtoSized,
             )]
             pub struct #quoted_name #fields
         });
@@ -647,15 +645,15 @@ mod transformations {
         tokens.append_all(quote! {
             #[derive(
                 Clone, Debug, PartialEq,
-                Serialize, Deserialize,
-                MtProtoIdentifiable, MtProtoSized,
+                serde_derive::Serialize, serde_derive::Deserialize,
+                serde_mtproto_derive::MtProtoIdentifiable, serde_mtproto_derive::MtProtoSized,
             )]
             #[mtproto_identifiable(id = #id_hex_string)]
             pub struct #name #generics #fields
 
-            impl #impl_generics ::tl::TLObject for #name #generics {
-                fn object_type() -> ::tl::dynamic::ObjectType {
-                    ::tl::dynamic::ObjectType::Function
+            impl #impl_generics crate::tl::TLObject for #name #generics {
+                fn object_type() -> crate::tl::dynamic::ObjectType {
+                    crate::tl::dynamic::ObjectType::Function
                 }
             }
         });

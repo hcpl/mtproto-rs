@@ -4,23 +4,25 @@ use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
+use error_chain::bail;
 use futures::{self, Future};
+use log::{debug, info};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_mtproto;
 use tokio_io::{self, AsyncRead};
 use tokio_tcp::TcpStream;
 
-use ::async_io;
-use ::error::{self, ErrorKind};
-use ::network::connection::common::{
+use crate::async_io;
+use crate::error::{self, ErrorKind};
+use crate::network::connection::common::{
     self, DEFAULT_SERVER_ADDR, Connection, RecvConnection, SendConnection,
 };
-use ::network::connection::tcp_common;
-use ::network::state::State;
-use ::tl::TLObject;
-use ::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
-use ::utils::safe_uint_cast;
+use crate::network::connection::tcp_common;
+use crate::network::state::State;
+use crate::tl::TLObject;
+use crate::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
+use crate::utils::safe_uint_cast;
 
 
 #[derive(Debug)]
@@ -207,19 +209,19 @@ impl Connection for ConnectionTcpFull {
     type RecvConnection = RecvConnectionTcpFull;
 
     fn connect(server_addr: SocketAddr)
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>
     {
         Box::new(Self::connect(server_addr))
     }
 
     fn with_default_server()
-        -> Box<Future<Item = Self, Error = error::Error> + Send>
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>
     {
         Box::new(Self::with_default_server())
     }
 
     fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
@@ -228,7 +230,7 @@ impl Connection for ConnectionTcpFull {
     }
 
     fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
@@ -393,7 +395,7 @@ impl RecvConnectionTcpFull {
 
 impl SendConnection for SendConnectionTcpFull {
     fn send_plain<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
@@ -401,7 +403,7 @@ impl SendConnection for SendConnectionTcpFull {
     }
 
     fn send<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
@@ -409,7 +411,7 @@ impl SendConnection for SendConnectionTcpFull {
     }
 
     fn send_raw<R>(self, raw_message: R)
-        -> Box<Future<Item = Self, Error = (Self, R, error::Error)> + Send>
+        -> Box<dyn Future<Item = Self, Error = (Self, R, error::Error)> + Send>
     where
         R: RawMessageCommon,
     {
@@ -419,7 +421,7 @@ impl SendConnection for SendConnectionTcpFull {
 
 impl RecvConnection for RecvConnectionTcpFull {
     fn recv_plain<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -427,7 +429,7 @@ impl RecvConnection for RecvConnectionTcpFull {
     }
 
     fn recv<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send,
     {
@@ -435,7 +437,7 @@ impl RecvConnection for RecvConnectionTcpFull {
     }
 
     fn recv_raw<S>(self)
-        -> Box<Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
     where
         S: RawMessageCommon,
     {

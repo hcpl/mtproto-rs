@@ -3,17 +3,21 @@
 use std::fmt;
 use std::marker::PhantomData;
 
+use arrayref::array_ref;
 use byteorder::{ByteOrder, LittleEndian};
+use log::debug;
 use rand::{self, RngCore};
 use serde::de::{self, Deserialize, DeserializeOwned, DeserializeSeed, Deserializer, Error as DeError};
 use serde::ser::Serialize;
+use serde_derive::Serialize;
 use serde_mtproto::{self, Boxed, Identifiable, MtProtoSized, UnsizedByteBuf, UnsizedByteBufSeed, WithSize};
+use serde_mtproto_derive::MtProtoSized;
 
-use ::crypto;
-use ::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
-use ::error::{self, ErrorKind};
-use ::protocol::ProtocolVersion;
-use ::utils::{
+use crate::crypto;
+use crate::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
+use crate::error::{self, ErrorKind};
+use crate::protocol::ProtocolVersion;
+use crate::utils::{
     little_endian_i128_from_array,
     safe_uint_cast,
 };
@@ -96,7 +100,7 @@ impl<'de> Deserialize<'de> for RawMessagePlain {
         impl<'de> de::Visitor<'de> for RawMessagePlainVisitor {
             type Value = RawMessagePlain;
 
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("raw message data")
             }
 
@@ -196,7 +200,7 @@ impl<'de> DeserializeSeed<'de> for RawMessageSeed {
         impl<'de> de::Visitor<'de> for RawMessageVisitor {
             type Value = RawMessage;
 
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("raw message")
             }
 
@@ -366,7 +370,7 @@ impl<'de> DeserializeSeed<'de> for RawMessageDataSeed {
         impl<'de> de::Visitor<'de> for RawMessageDataVisitor {
             type Value = RawMessageData;
 
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("raw message data")
             }
 

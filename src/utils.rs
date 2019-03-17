@@ -3,8 +3,8 @@ use num_traits::cast::cast;
 use num_traits::int::PrimInt;
 use num_traits::sign::Unsigned;
 
-use ::error::{self, ErrorKind};
-use ::manual_types::i256::I256;
+use crate::error::{self, ErrorKind};
+use crate::manual_types::i256::I256;
 
 
 pub(crate) fn safe_uint_cast<T, U>(n: T) -> error::Result<U>

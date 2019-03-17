@@ -1,6 +1,6 @@
 use erased_serde::Serialize as ErasedSerialize;
 
-use ::tl::dynamic::TLObject;
+use crate::tl::dynamic::TLObject;
 
 
 pub trait RpcFunction: ErasedSerialize {

@@ -1,15 +1,16 @@
 use std::fmt;
 
 use byteorder::{ByteOrder, LittleEndian};
+use log::debug;
 use openssl::{bn, pkey, rsa};
 use serde_bytes::ByteBuf;
 use serde_mtproto;
 
-use ::crypto::{
+use crate::crypto::{
     hash::sha1_from_bytes,
     rsa::common,
 };
-use ::error;
+use crate::error;
 
 
 /// "Cooked" RSA key.
@@ -63,11 +64,11 @@ impl RsaPublicKey {
 // The `impl fmt::Debug for rsa::Rsa<T>` only writes "Rsa".
 // We want to output more information when debugging (even though it's unsafe).
 impl fmt::Debug for RsaPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct StrDebugAsDisplay<'a>(&'a str);
 
         impl<'a> fmt::Debug for StrDebugAsDisplay<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 fmt::Display::fmt(self.0, f)
             }
         }
@@ -78,7 +79,7 @@ impl fmt::Debug for RsaPublicKey {
         }
 
         impl<'a> fmt::Debug for RsaRepr<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let debug_big_num = |big_num: &bn::BigNumRef| {
                     match big_num.to_hex_str() {
                         Ok(hex_str) => hex_str.to_lowercase(),

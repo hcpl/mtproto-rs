@@ -1,10 +1,11 @@
+use error_chain::bail;
 use rand::{self, RngCore};
 
-use ::crypto::{
+use crate::crypto::{
     hash::sha1_from_bytes,
     rsa::RsaPublicKey,
 };
-use ::error::{self, ErrorKind};
+use crate::error::{self, ErrorKind};
 
 
 /// RSA public key stored as **X.509 SubjectPublicKeyInfo/OpenSSL PEM

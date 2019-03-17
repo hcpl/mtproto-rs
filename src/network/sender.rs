@@ -6,19 +6,20 @@ use futures::{
     self, Future, Sink, Stream,
     sync::mpsc,
 };
+use log::error;
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_executor;
 
-use ::error::{self, ErrorKind};
-use ::network::{
+use crate::error::{self, ErrorKind};
+use crate::network::{
     auth::connect_auth_with_state_retryable,
     connection::{DEFAULT_SERVER_ADDR, Connection},
     state::State,
 };
-use ::protocol::ProtocolVersion;
-use ::tl::TLObject;
-use ::tl::message::{Message, RawMessage};
+use crate::protocol::ProtocolVersion;
+use crate::tl::TLObject;
+use crate::tl::message::{Message, RawMessage};
 
 
 const DEFAULT_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V2;
@@ -269,12 +270,13 @@ mod send_loop {
     use futures::{
         Async, Future, Poll, Stream,
         sync::mpsc,
+        try_ready,
     };
-    use state_machine_future::RentToOwn;
+    use state_machine_future::{RentToOwn, StateMachineFuture, transition};
 
-    use ::error::{self, ErrorKind};
-    use ::network::connection::common::SendConnection;
-    use ::tl::message::RawMessage;
+    use crate::error::{self, ErrorKind};
+    use crate::network::connection::common::SendConnection;
+    use crate::tl::message::RawMessage;
 
 
     #[derive(StateMachineFuture)]
@@ -290,7 +292,7 @@ mod send_loop {
         GotRawMessageFromQueue {
             user_connected: bool,
             send_queue_recv: mpsc::UnboundedReceiver<RawMessage>,
-            send_fut: Box<Future<Item = S, Error = error::Error> + Send>,
+            send_fut: Box<dyn Future<Item = S, Error = error::Error> + Send>,
         },
 
         #[state_machine_future(transitions(Closed))]
@@ -379,12 +381,13 @@ mod recv_loop {
     use futures::{
         Future, Poll, Sink,
         sync::mpsc,
+        try_ready,
     };
-    use state_machine_future::RentToOwn;
+    use state_machine_future::{RentToOwn, StateMachineFuture, transition};
 
-    use ::error::{self, ErrorKind};
-    use ::network::connection::common::RecvConnection;
-    use ::tl::message::RawMessage;
+    use crate::error::{self, ErrorKind};
+    use crate::network::connection::common::RecvConnection;
+    use crate::tl::message::RawMessage;
 
     #[derive(StateMachineFuture)]
     pub(super) enum RecvLoop<R: RecvConnection> {
@@ -399,7 +402,7 @@ mod recv_loop {
         RetrievingRawMessage {
             user_connected: bool,
             recv_queue_send: mpsc::UnboundedSender<RawMessage>,
-            recv_fut: Box<Future<Item = (R, RawMessage), Error = error::Error> + Send>,
+            recv_fut: Box<dyn Future<Item = (R, RawMessage), Error = error::Error> + Send>,
         },
 
         #[state_machine_future(transitions(Closed))]

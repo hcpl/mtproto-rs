@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use futures::Future;
+use log::warn;
 use tokio_timer;
 
-use ::error::{self, ErrorKind};
+use crate::error::{self, ErrorKind};
 
 
 pub(super) fn chain_retryable<Fut, S>(

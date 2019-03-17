@@ -1,5 +1,8 @@
-use ::error::{self, ErrorKind};
-use ::utils::safe_uint_cast;
+use error_chain::bail;
+use log::trace;
+
+use crate::error::{self, ErrorKind};
+use crate::utils::safe_uint_cast;
 
 
 /// Decomposes a large composite number into 2 primes.

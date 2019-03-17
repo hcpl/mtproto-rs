@@ -5,9 +5,11 @@ use flate2::read::{GzDecoder as GzDecoderRead, GzEncoder as GzEncoderRead};
 use serde::de::{Deserialize, Deserializer, DeserializeOwned, Error as DeError};
 use serde::ser::{Error as SerError, Serialize, Serializer};
 use serde_bytes::ByteBuf;
+use serde_derive::{Serialize, Deserialize};
 use serde_mtproto::{self, Boxed, MtProtoSized};
+use serde_mtproto_derive::MtProtoIdentifiable;
 
-use ::error;
+use crate::error;
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,66 +1,13 @@
 // `error_chain!` can nest quite deeply
 #![recursion_limit = "172"]
 
-#[macro_use]
-extern crate arrayref;
-extern crate byteorder;
-#[macro_use]
-extern crate cfg_if;
-extern crate chrono;
-extern crate crc;
-extern crate erased_serde;
-#[macro_use]
-extern crate error_chain;
-extern crate flate2;
-#[macro_use]
-extern crate futures;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-extern crate num_traits;
-extern crate rand;
-extern crate serde;
-extern crate serde_bytes;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_mtproto;
-#[macro_use]
-extern crate serde_mtproto_derive;
-#[macro_use]
-extern crate state_machine_future;
-extern crate tokio_executor;
-extern crate tokio_io;
-extern crate tokio_tcp;
-extern crate tokio_timer;
 
-cfg_if! {
-    if #[cfg(feature = "non-openssl-impls")] {
-        extern crate aes;
-        extern crate base64;
-        extern crate der_parser;
-        extern crate digest;
-        extern crate nom;
-        extern crate num_bigint;
-        extern crate sha1;
-        extern crate sha2;
-    }
-}
+#[cfg(not(any(feature = "non-openssl-impls", feature = "openssl")))]
+compile_error!("\
+    At least one of the features \"non-openssl-impls\" or \"openssl\" \
+    must be enabled for this crate.\
+");
 
-cfg_if! {
-    if #[cfg(feature = "openssl")] {
-        extern crate openssl;
-    }
-}
-
-cfg_if! {
-    if #[cfg(not(any(feature = "non-openssl-impls", feature = "openssl")))] {
-        compile_error!("\
-            At least one of the features \"non-openssl-impls\" or \"openssl\" \
-            must be enabled for this crate.\
-        ");
-    }
-}
 
 
 #[macro_use]
@@ -80,5 +27,5 @@ pub mod tl;
 include!(concat!(env!("OUT_DIR"), "/schema.rs"));
 
 
-pub use error::{Error, ErrorKind, Result, ResultExt};
-pub use tl::TLObject;
+pub use crate::error::{Error, ErrorKind, Result, ResultExt};
+pub use crate::tl::TLObject;

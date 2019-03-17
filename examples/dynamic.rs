@@ -1,12 +1,4 @@
-extern crate dotenv;
-extern crate env_logger;
-#[macro_use]
-extern crate log;
-extern crate mtproto;
-extern crate serde;
-extern crate serde_mtproto;
-
-
+use log::info;
 //use mtproto::tl::TLConstructorsMap;
 use mtproto::schema::{constructors, types};
 //use serde::de::DeserializeSeed;

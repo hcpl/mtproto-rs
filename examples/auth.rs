@@ -1,17 +1,5 @@
-extern crate dotenv;
-extern crate env_logger;
-#[macro_use]
-extern crate error_chain;
-extern crate futures;
-extern crate mtproto;
-extern crate rand;
-extern crate tokio;
-
-#[macro_use]
-extern crate log;
-
-
 use futures::{Future, Stream};
+use log::error;
 use mtproto::{
     network::auth,
     network::connection::{
@@ -24,6 +12,14 @@ use mtproto::{
 
 
 mod error {
+    use error_chain::{
+        error_chain,
+        error_chain_processing,
+        impl_error_chain_kind,
+        impl_error_chain_processed,
+        impl_extract_backtrace,
+    };
+
     error_chain! {
         links {
             MtProto(::mtproto::Error, ::mtproto::ErrorKind);
@@ -34,7 +30,7 @@ mod error {
 
 /// Initialize session and execute authorization.
 fn processed_auth<C>(tag: &'static str)
-    -> Box<Future<Item = (), Error = ()> + Send>
+    -> Box<dyn Future<Item = (), Error = ()> + Send>
 where
     C: Connection,
 {

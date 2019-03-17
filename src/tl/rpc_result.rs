@@ -4,8 +4,8 @@ use std::marker::PhantomData;
 use serde::de::{self, Deserialize, Deserializer, DeserializeOwned};
 use serde_mtproto::Identifiable;
 
-use ::schema::types;
-use ::tl::gzip_packed::GzipPacked;
+use crate::schema::types;
+use crate::tl::gzip_packed::GzipPacked;
 
 
 const RPC_RESULT_ID: u32 = 0xf35c6d01;
@@ -35,7 +35,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for RpcResult<T> {
         impl<'de, T: DeserializeOwned> de::Visitor<'de> for RpcResultVisitor<T> {
             type Value = RpcResult<T>;
 
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("an RPC result")
             }
 

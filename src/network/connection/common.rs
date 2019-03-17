@@ -3,17 +3,20 @@ use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 
+use error_chain::bail;
 use futures::Future;
+use lazy_static::lazy_static;
+use log::debug;
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
 use serde_mtproto::MtProtoSized;
 use tokio_io::AsyncWrite;
 
-use ::async_io;
-use ::error::{self, ErrorKind};
-use ::tl::TLObject;
-use ::tl::message::{MessageCommon, RawMessageCommon};
-use ::network::state::State;
+use crate::async_io;
+use crate::error::{self, ErrorKind};
+use crate::tl::TLObject;
+use crate::tl::message::{MessageCommon, RawMessageCommon};
+use crate::network::state::State;
 
 
 lazy_static! {
@@ -30,19 +33,19 @@ pub trait Connection: Send + Sized + 'static {
     type RecvConnection: RecvConnection;
 
     fn connect(server_addr: SocketAddr)
-        -> Box<Future<Item = Self, Error = error::Error> + Send>;
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>;
 
     fn with_default_server()
-        -> Box<Future<Item = Self, Error = error::Error> + Send>;
+        -> Box<dyn Future<Item = Self, Error = error::Error> + Send>;
 
     fn request_plain<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
 
     fn request<T, U>(self, state: State, request_data: T)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, Option<T>, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send,
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
@@ -52,34 +55,34 @@ pub trait Connection: Send + Sized + 'static {
 
 pub trait SendConnection: Send + Sized + 'static {
     fn send_plain<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send;
 
     fn send<T>(self, state: State, send_data: T)
-        -> Box<Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State), Error = (Self, State, T, error::Error)> + Send>
     where
         T: fmt::Debug + Serialize + TLObject + Send;
 
     fn send_raw<R>(self, raw_message: R)
-        -> Box<Future<Item = Self, Error = (Self, R, error::Error)> + Send>
+        -> Box<dyn Future<Item = Self, Error = (Self, R, error::Error)> + Send>
     where
         R: RawMessageCommon;
 }
 
 pub trait RecvConnection: Send + Sized + 'static {
     fn recv_plain<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
 
     fn recv<U>(self, state: State)
-        -> Box<Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, State, U), Error = (Self, State, error::Error)> + Send>
     where
         U: fmt::Debug + DeserializeOwned + TLObject + Send;
 
     fn recv_raw<S>(self)
-        -> Box<Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
+        -> Box<dyn Future<Item = (Self, S), Error = (Self, error::Error)> + Send>
     where
         S: RawMessageCommon;
 }

@@ -3,6 +3,8 @@ use std::fmt::{self, Write};
 use std::str;
 
 use rand;
+use serde_derive::{Serialize, Deserialize};
+use serde_mtproto_derive::MtProtoSized;
 
 
 /// The smallest signed 256-bit integer (`-57_896_044_618_658_097_711_785_492_504_343_953_926_634_992_332_820_282_019_728_792_003_956_564_819_968`).
@@ -100,7 +102,7 @@ impl Ord for I256 {
 }
 
 impl fmt::Display for I256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.hi == 0 {
             self.lo.fmt(f)
         } else if !self.is_negative() {
@@ -135,13 +137,13 @@ impl fmt::Display for I256 {
 }
 
 impl fmt::Debug for I256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "I256({})", self)
     }
 }
 
 impl fmt::Binary for I256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.hi == 0 {
             self.lo.fmt(f)
         } else {
@@ -155,7 +157,7 @@ impl fmt::Binary for I256 {
 }
 
 impl fmt::LowerHex for I256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.hi == 0 {
             self.lo.fmt(f)
         } else {
@@ -169,7 +171,7 @@ impl fmt::LowerHex for I256 {
 }
 
 impl fmt::UpperHex for I256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.hi == 0 {
             self.lo.fmt(f)
         } else {
@@ -191,7 +193,7 @@ struct FormatBuffer<'a> {
 }
 
 impl<'a> FormatBuffer<'a> {
-    fn new(buffer: &mut [u8]) -> FormatBuffer {
+    fn new(buffer: &mut [u8]) -> FormatBuffer<'_> {
         FormatBuffer { buffer, len: 0 }
     }
 

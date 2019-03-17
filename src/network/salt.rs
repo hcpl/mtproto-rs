@@ -1,6 +1,6 @@
 use chrono::{DateTime, TimeZone, Utc};
 
-use ::schema::types;
+use crate::schema::types;
 
 
 #[derive(Debug, Clone)]

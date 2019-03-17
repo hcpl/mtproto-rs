@@ -1,8 +1,10 @@
 use byteorder::{ByteOrder, LittleEndian};
+use error_chain::bail;
+use log::debug;
 use serde_mtproto;
 
-use ::error::{self, ErrorKind};
-use ::tl::message::{RawMessageCommon, RawMessageSeedCommon};
+use crate::error::{self, ErrorKind};
+use crate::tl::message::{RawMessageCommon, RawMessageSeedCommon};
 
 
 pub(super) fn parse_response<S>(response_bytes: &[u8]) -> error::Result<S>

@@ -1,6 +1,6 @@
-use ::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
-use ::error;
-use ::utils::little_endian_i128_into_array;
+use crate::crypto::hash::{sha1_from_bytes, sha256_from_bytes};
+use crate::error;
+use crate::utils::little_endian_i128_into_array;
 
 
 #[derive(Debug)]
