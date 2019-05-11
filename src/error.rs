@@ -4,13 +4,7 @@
 // Should be resolved upstream in <https://github.com/rust-lang-nursery/error-chain/pull/255>
 #![allow(deprecated)]
 
-use error_chain::{
-    error_chain,
-    error_chain_processing,
-    impl_error_chain_kind,
-    impl_error_chain_processed,
-    impl_extract_backtrace,
-};
+use error_chain::error_chain;
 
 
 error_chain! {
