@@ -52,7 +52,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for GzipPacked<T> {
         where D: Deserializer<'de>
     {
         let packed = Boxed::<GzipPackedHelper>::deserialize(deserializer)?;
-        let compressed: Vec<u8> = packed.into_inner().byte_buf.into();
+        let compressed = packed.into_inner().byte_buf.into_vec();
 
         let mut decoder = GzDecoderRead::new(compressed.as_slice());
         let mut bytes = Vec::new();

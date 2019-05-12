@@ -8,6 +8,7 @@ use error_chain::bail;
 use futures::{self, Future, IntoFuture};
 use log::{debug, error, info, warn};
 use rand::{self, RngCore};
+use serde_bytes::ByteBuf;
 use serde_mtproto::{self, Boxed, MtProtoSized};
 
 use crate::bigint::calc_g_pows_bytes;
@@ -186,8 +187,8 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
 
                 let p_q_inner_data = Boxed::new(types::P_Q_inner_data::p_q_inner_data(constructors::p_q_inner_data {
                     pq: res_pq.pq.clone(),
-                    p: p.clone().into(),
-                    q: q.clone().into(),
+                    p: ByteBuf::from(p.clone()),
+                    q: ByteBuf::from(q.clone()),
                     nonce,
                     server_nonce: res_pq.server_nonce,
                     new_nonce,
@@ -217,10 +218,10 @@ fn auth_step2<C: Connection>(input: Step2Input<C>)
                 let req_dh_params = functions::req_DH_params {
                     nonce,
                     server_nonce: res_pq.server_nonce,
-                    p: p.into(),
-                    q: q.into(),
+                    p: ByteBuf::from(p),
+                    q: ByteBuf::from(q),
                     public_key_fingerprint: fingerprint,
-                    encrypted_data: encrypted_data.to_vec().into(),
+                    encrypted_data: ByteBuf::from(encrypted_data.to_vec()),
                 };
 
                 Ok((conn, state, req_dh_params, nonce, res_pq.server_nonce, new_nonce))
@@ -357,7 +358,7 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                             nonce,
                             server_nonce,
                             retry_id: 0,  // TODO: actual retry ID
-                            g_b: g_b.into(),
+                            g_b: ByteBuf::from(g_b),
                         }));
 
                         let client_dh_inner_len = tryc!(client_dh_inner.size_hint());
@@ -376,10 +377,10 @@ fn auth_step3<C: Connection>(input: Step3Input<C>)
                             rand::thread_rng().fill_bytes(random_tail);
                         }
 
-                        let encrypted_data = crypto::aes::aes_ige_encrypt(
+                        let encrypted_data = ByteBuf::from(crypto::aes::aes_ige_encrypt(
                             &tmp_aes_params,
                             &client_dh_inner_to_encrypt,
-                        ).into();
+                        ));
 
                         let set_client_dh_params = functions::set_client_DH_params {
                             nonce,

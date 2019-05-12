@@ -16,7 +16,7 @@ categories = ["api-bindings"]
 [dependencies]
 aes = { version = "0.3", optional = true }
 arrayref = "0.3"
-base64 = { version = "0.9", optional = true }
+base64 = { version = "0.10", optional = true }
 byteorder = "1.2"
 cfg-if = "0.1"
 chrono = "0.4"
@@ -33,22 +33,22 @@ nom = { version = "4.0", optional = true }
 num-bigint = { version = "0.2", features = ["rand"], optional = true }
 num-traits = "0.2"
 openssl = { version = "0.10", optional = true }
-rand = { version = "0.5", features = ["i128_support"] }
+rand = "0.6"
 serde = "1.0"
-serde_bytes = "0.10"
+serde_bytes = "0.11"
 serde_derive = "1.0"
 serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
 serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
 sha-1 = { version = "0.8", optional = true }
 sha2 = { version = "0.8", optional = true }
-state_machine_future = "0.1.8"
+state_machine_future = "0.2"
 tokio-executor = "0.1"
 tokio-io = "0.1"
 tokio-tcp = "0.1"
 tokio-timer = "0.2"
 
 [build-dependencies]
-env_logger = "0.5"
+env_logger = "0.6"
 error-chain = "0.12.1"
 log = "0.4"
 proc-macro2 = "0.4.4"
@@ -57,9 +57,9 @@ tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e0
 tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e00d963" }
 
 [dev-dependencies]
-dotenv = "0.13"
-env_logger = "0.5"
-pretty_assertions = "0.5"
+dotenv = "0.14"
+env_logger = "0.6"
+pretty_assertions = "0.6"
 tokio = "0.1"
 
 
