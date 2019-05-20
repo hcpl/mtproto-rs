@@ -11,17 +11,6 @@ use mtproto::{
 };
 
 
-mod error {
-    use error_chain::error_chain;
-
-    error_chain! {
-        links {
-            MtProto(::mtproto::Error, ::mtproto::ErrorKind);
-        }
-    }
-}
-
-
 /// Initialize session and execute authorization.
 fn processed_auth<C>(tag: &'static str)
     -> Box<dyn Future<Item = (), Error = ()> + Send>

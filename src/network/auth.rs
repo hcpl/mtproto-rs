@@ -37,8 +37,8 @@ use crate::utils::{
 #[derive(Clone)]
 pub struct AuthKey {
     pub(crate) raw: [u8; 256],
-    aux_hash: i64,
-    fingerprint: i64,
+    pub(crate) aux_hash: i64,
+    pub(crate) fingerprint: i64,
 }
 
 impl fmt::Debug for AuthKey {

@@ -32,7 +32,7 @@ impl State {
         }
     }
 
-    pub fn create_message<T, M>(&mut self, obj: T) -> Result<M, (T, error::Error)>
+    pub fn create_message<T, M>(&mut self, obj: T) -> error::Result<M>
         where M: MessageCommon<T>,
               T: TLObject,
     {
@@ -40,6 +40,16 @@ impl State {
         let seq_no = self.next_seq_no(T::object_type());
 
         M::new(self.salt, self.id, message_id, seq_no, obj)
+    }
+
+    pub fn create_message2<T, M>(&mut self, obj: T) -> Result<M, (T, error::Error)>
+        where M: MessageCommon<T>,
+              T: TLObject,
+    {
+        let message_id = self.get_new_msg_id();
+        let seq_no = self.next_seq_no(T::object_type());
+
+        M::new2(self.salt, self.id, message_id, seq_no, obj)
     }
 
     pub fn update_message_id<M, T>(&mut self, msg: &mut M)

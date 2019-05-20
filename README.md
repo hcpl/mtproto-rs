@@ -34,7 +34,7 @@ Currently implemented and planned features include:
 
 ## Examples
 
-There are 2 examples which you can build and run:
+There are 3 examples which you can build and run:
 
 ### `auth`
 
@@ -42,7 +42,7 @@ Fetches authorization key over TCP and HTTP.
 TCP connection supports 3 modes: abridged, intermediate and full (this example uses all three),
 while HTTP only has 1 mode.
 
-Based on [tokio](https://tokio.rs).
+Based on [futures 0.1](https://docs.rs/futures/0.1.*/futures/) and [tokio 0.1](https://tokio.rs).
 
 ```sh
 $ cargo run --example auth
@@ -51,6 +51,13 @@ $ RUST_LOG=auth=info cargo run --example auth
 # Even more verbose
 $ RUST_LOG=auth=debug cargo run --example auth
 ```
+
+### `auth_async_await`
+
+Same as the `auth` example except it uses the nightly-only async-await part of the library.
+
+Based on [futures-preview 0.3](https://rust-lang-nursery.github.io/futures-rs/) and
+[tokio 0.1](https://tokio.rs).
 
 ### `dynamic`
 

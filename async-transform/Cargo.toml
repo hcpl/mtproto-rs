@@ -1,0 +1,13 @@
+[package]
+name = "async-transform"
+version = "0.1.0"
+edition = "2018"
+authors = ["Nguyen Duc My <hcpl.prog@gmail.com>"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "0.4.13"
+quote = "0.6.8"
+syn = { version = "0.15.22", features = ["full", "visit-mut"] }

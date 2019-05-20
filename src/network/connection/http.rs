@@ -65,7 +65,7 @@ impl ConnectionHttp {
         T: fmt::Debug + Serialize + TLObject + Send,
         M: MessageCommon<T>,
     {
-        match state.create_message::<T, M>(send_data) {
+        match state.create_message2::<T, M>(send_data) {
             Err((send_data, e)) => {
                 futures::future::Either::A(futures::future::err((self, state, send_data, e)))
             },
@@ -284,7 +284,7 @@ impl SendConnectionHttp {
         T: fmt::Debug + Serialize + TLObject + Send,
         M: MessageCommon<T>,
     {
-        match state.create_message::<T, M>(send_data) {
+        match state.create_message2::<T, M>(send_data) {
             Err((send_data, e)) => {
                 futures::future::Either::A(futures::future::err((self, state, send_data, e)))
             },

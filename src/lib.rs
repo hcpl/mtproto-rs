@@ -1,6 +1,8 @@
 // `error_chain!` can nest quite deeply
 #![recursion_limit = "172"]
 
+#![cfg_attr(feature = "async-await-preview", feature(async_await))]
+
 
 #[cfg(not(any(feature = "non-openssl-impls", feature = "openssl")))]
 compile_error!("\
@@ -17,6 +19,8 @@ pub(crate) mod async_io;
 pub(crate) mod bigint;
 pub(crate) mod crypto;
 
+#[cfg(feature = "async-await-preview")]
+pub mod async_await;
 pub mod error;
 pub mod manual_types;
 pub mod network;

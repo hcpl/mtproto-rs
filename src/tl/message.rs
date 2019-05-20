@@ -566,6 +566,14 @@ pub trait MessageCommon<T>: fmt::Debug + Sized + Send + private::MessageCommonSe
         message_id: i64,
         seq_no: u32,
         obj: T,
+    ) -> error::Result<Self>;
+
+    fn new2(
+        salt: i64,
+        session_id: i64,
+        message_id: i64,
+        seq_no: u32,
+        obj: T,
     ) -> Result<Self, (T, error::Error)>;
 
     fn to_raw(
@@ -595,6 +603,17 @@ impl<T> MessageCommon<T> for MessagePlain<T>
     type RawSeed = PhantomData<RawMessagePlain>;
 
     fn new(
+        _salt: i64,
+        _session_id: i64,
+        message_id: i64,
+        _seq_no: u32,
+        obj: T,
+    ) -> error::Result<Self> {
+        let body = WithSize::new(Boxed::new(obj))?;
+        Ok(MessagePlain { message_id, body })
+    }
+
+    fn new2(
         _salt: i64,
         _session_id: i64,
         message_id: i64,
@@ -655,6 +674,18 @@ impl<T> MessageCommon<T> for Message<T>
     type RawSeed = RawMessageSeed;
 
     fn new(
+        salt: i64,
+        session_id: i64,
+        message_id: i64,
+        seq_no: u32,
+        obj: T,
+    ) -> error::Result<Self> {
+        let body = WithSize::new(Boxed::new(obj))?;
+        let data = MessageData { salt, session_id, message_id, seq_no, body };
+        Ok(Message { data })
+    }
+
+    fn new2(
         salt: i64,
         session_id: i64,
         message_id: i64,

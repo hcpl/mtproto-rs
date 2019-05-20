@@ -13,15 +13,71 @@ env:
     - RUST_BACKTRACE=1
     - RUST_LOG=build_script_build=debug
 
-install:
-  - rustup component add rustfmt-preview
+matrix:
+  include:
+    - rust: 1.31.1
+      env: DESCRIPTION="minimum supported Rust"
+      install:
+        - rustup component add rustfmt-preview
+      script:
+        - pwd
+        - ls -la
 
-script:
-  - pwd
-  - ls -la
-  - cargo test -vv --all
-  - cargo build -vv --all --examples
-  - cargo test -vv --features openssl --all
-  - cargo build -vv --features openssl --all --examples
-  - cargo test -vv --no-default-features --features openssl --all
-  - cargo build -vv --no-default-features --features openssl --all --examples
+        - cargo test -vv --all
+        - cargo build -vv --all --examples
+        - cargo test -vv --features 'openssl' --all
+        - cargo build -vv --features 'openssl' --all --examples
+        - cargo test -vv --no-default-features --features 'openssl' --all
+        - cargo build -vv --no-default-features --features 'openssl' --all --examples
+
+    - rust: stable
+      env: DESCRIPTION="stable Rust"
+      install:
+        - rustup component add rustfmt-preview
+      script:
+        - pwd
+        - ls -la
+
+        - cargo test -vv --all
+        - cargo build -vv --all --examples
+        - cargo test -vv --features 'openssl' --all
+        - cargo build -vv --features 'openssl' --all --examples
+        - cargo test -vv --no-default-features --features 'openssl' --all
+        - cargo build -vv --no-default-features --features 'openssl' --all --examples
+
+    - rust: beta
+      env: DESCRIPTION="beta Rust"
+      install:
+        - rustup component add rustfmt-preview
+      script:
+        - pwd
+        - ls -la
+
+        - cargo test -vv --all
+        - cargo build -vv --all --examples
+        - cargo test -vv --features 'openssl' --all
+        - cargo build -vv --features 'openssl' --all --examples
+        - cargo test -vv --no-default-features --features 'openssl' --all
+        - cargo build -vv --no-default-features --features 'openssl' --all --examples
+
+    - rust: nightly
+      env: DESCRIPTION="nightly Rust"
+      install:
+        - rustup component add rustfmt-preview
+      script:
+        - pwd
+        - ls -la
+
+        - cargo test -vv --all
+        - cargo build -vv --all --examples
+        - cargo test -vv --features 'openssl' --all
+        - cargo build -vv --features 'openssl' --all --examples
+        - cargo test -vv --no-default-features --features 'openssl' --all
+        - cargo build -vv --no-default-features --features 'openssl' --all --examples
+
+        - cargo test -vv --features 'async-await-preview' --all
+        - cargo build -vv --features 'async-await-preview' --all --examples
+        - cargo test -vv --features 'async-await-preview openssl' --all
+        - cargo build -vv --features 'async-await-preview openssl' --all --examples
+        - cargo test -vv --no-default-features --features 'async-await-preview openssl' --all
+        - cargo build -vv --no-default-features --features 'async-await-preview openssl' --all --examples

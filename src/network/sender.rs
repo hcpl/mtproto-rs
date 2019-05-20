@@ -158,7 +158,7 @@ impl SenderConnected {
     where
         T: fmt::Debug + Serialize + TLObject + Send,
     {
-        let message = self.state.create_message::<T, Message<T>>(request_data).map_err(|(_, e)| e)?;
+        let message = self.state.create_message2::<T, Message<T>>(request_data).map_err(|(_, e)| e)?;
         let raw_message = message.to_raw(self.state.auth_raw_key().unwrap(), self.state.version)?;
 
         self.send_raw(raw_message)

@@ -13,8 +13,13 @@ keywords = ["async", "mtproto", "protocol", "telegram"]
 categories = ["api-bindings"]
 
 
+[workspace]
+members = ["async-transform"]
+
+
 [dependencies]
 aes = { version = "0.3", optional = true }
+async-transform = { path = "async-transform", optional = true }
 arrayref = "0.3"
 base64 = { version = "0.10", optional = true }
 byteorder = "1.2"
@@ -27,6 +32,8 @@ erased-serde = "0.3"
 error-chain = "0.12.1"
 flate2 = "1.0"
 futures = "0.1"
+futures-io-preview = { version = "0.3.0-alpha.16", optional = true }
+futures-util-preview = { version = "0.3.0-alpha.16", features = ["compat", "io-compat"], optional = true }
 lazy_static = "1.0"
 log = "0.4"
 nom = { version = "4.0", optional = true }
@@ -37,8 +44,8 @@ rand = "0.6"
 serde = "1.0"
 serde_bytes = "0.11"
 serde_derive = "1.0"
-serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
-serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "6109ae6" }
+serde_mtproto = { git = "https://github.com/hcpl/serde_mtproto", rev = "465384d" }
+serde_mtproto_derive = { git = "https://github.com/hcpl/serde_mtproto", rev = "465384d" }
 sha-1 = { version = "0.8", optional = true }
 sha2 = { version = "0.8", optional = true }
 state_machine_future = "0.2"
@@ -53,8 +60,8 @@ error-chain = "0.12.1"
 log = "0.4"
 proc-macro2 = "0.4.4"
 quote = "0.6.3"
-tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e00d963" }
-tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "e00d963" }
+tl-lang-rust-interop = { git = "https://github.com/hcpl/rust-tl-lang", rev = "d294a9a" }
+tl-lang-syn = { git = "https://github.com/hcpl/rust-tl-lang", rev = "d294a9a" }
 
 [dev-dependencies]
 dotenv = "0.14"
@@ -66,6 +73,18 @@ tokio = "0.1"
 [features]
 default = ["non-openssl-impls"]
 non-openssl-impls = ["aes", "base64", "der-parser", "digest", "nom", "num-bigint", "sha-1", "sha2"]
+async-await-preview = ["async-transform", "futures-io-preview", "futures-util-preview"]
+
+
+[[example]]
+name = "auth"
+
+[[example]]
+name = "auth_async_await"
+required-features = ["async-await-preview"]
+
+[[example]]
+name = "dynamic"
 
 
 [profile.dev]
