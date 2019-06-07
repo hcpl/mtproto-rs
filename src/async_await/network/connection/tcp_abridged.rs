@@ -1,26 +1,18 @@
 use std::fmt;
 use std::marker::Unpin;
 use std::mem;
-use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use error_chain::bail;
 use futures_io::AsyncRead;
 use futures_util::compat::{AsyncRead01CompatExt, Future01CompatExt};
 use futures_util::io::AsyncReadExt;
-use log::{debug, info};
-use serde::de::DeserializeOwned;
-use serde::ser::Serialize;
+use log::debug;
 use tokio_tcp::TcpStream;
 
 use crate::error::{self, ErrorKind};
-use crate::async_await::network::connection::common::{
-    self, DEFAULT_SERVER_ADDR, Connection, RecvConnection, SendConnection,
-};
-use crate::async_await::network::connection::tcp_common;
-use crate::network::state::State;
-use crate::tl::TLObject;
-use crate::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
+use crate::async_await::network::connection::{common, tcp_common};
+use crate::tl::message::RawMessageCommon;
 
 
 #[derive(Debug)]
@@ -30,173 +22,6 @@ pub struct ConnectionTcpAbridged {
 }
 
 #[async_transform::impl_async_methods_to_impl_futures]
-impl ConnectionTcpAbridged {
-    pub async fn connect(server_addr: SocketAddr) -> error::Result<Self> {
-        info!("New TCP connection in abridged mode to {}", server_addr);
-        let socket = TcpStream::connect(&server_addr).compat().await?;
-
-        Ok(Self { socket, is_first_request: true })
-    }
-
-    pub async fn with_default_server() -> error::Result<Self> {
-        Self::connect(*DEFAULT_SERVER_ADDR).await
-    }
-
-
-    pub async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, MessagePlain<T>>(state, send_data).await
-    }
-
-    pub async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, Message<T>>(state, send_data).await
-    }
-
-    async fn impl_send<T, M>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        M: MessageCommon<T>,
-    {
-        let request_message = state.create_message::<T, M>(send_data)?;
-        debug!("Message to send: {:?}", request_message);
-
-        let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
-        self.send_raw(&raw_message).await
-    }
-
-    pub async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon,
-    {
-        debug!("Raw message to send: {:?}", raw_message);
-        let data = prepare_send_data(raw_message, &mut self.is_first_request)?;
-
-        let socket_mut = &mut self.socket;
-        let mut socket_mut03 = socket_mut.compat();
-        common::perform_send(&mut socket_mut03, &data).await
-    }
-
-
-    pub async fn recv_plain<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, MessagePlain<U>>(state).await
-    }
-
-    pub async fn recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, Message<U>>(state).await
-    }
-
-    async fn impl_recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        N: MessageCommon<U>,
-    {
-        let raw_message = self.recv_raw().await?;
-        let message = common::from_raw::<U, N>(&raw_message, state)?;
-        debug!("Received message: {:?}", message);
-
-        Ok(message.into_body())
-    }
-
-    pub async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        let socket_mut = &mut self.socket;
-        let mut socket_mut03 = socket_mut.compat();
-        let data = perform_recv(&mut socket_mut03).await?;
-        let raw_message = tcp_common::parse_response::<S>(&data)?;
-        debug!("Received raw message: {:?}", raw_message);
-
-        Ok(raw_message)
-    }
-
-
-    pub async fn request_plain<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data).await
-    }
-
-    pub async fn request<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data).await
-    }
-
-    async fn impl_request<T, U, M, N>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        M: MessageCommon<T>,
-        N: MessageCommon<U>,
-    {
-        self.impl_send::<T, M>(state, request_data).await?;
-        self.impl_recv::<U, N>(state).await
-    }
-}
-
-
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl Connection for ConnectionTcpAbridged {
-    type SendConnection = SendConnectionTcpAbridged;
-    type RecvConnection = RecvConnectionTcpAbridged;
-
-    async fn connect(server_addr: SocketAddr) -> error::Result<Self> {
-        Self::connect(server_addr).await
-    }
-
-    async fn with_default_server() -> error::Result<Self> {
-        Self::with_default_server().await
-    }
-
-    async fn request_plain<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.request_plain(state, request_data).await
-    }
-
-    async fn request<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.request(state, request_data).await
-    }
-
-    fn split(self) -> (Self::SendConnection, Self::RecvConnection) {
-        self.split()
-    }
-}
-
-
-#[derive(Debug)]
-pub struct SendConnectionTcpAbridged {
-    send_socket: futures_util::io::WriteHalf<futures_util::compat::Compat01As03<TcpStream>>,
-    is_first_request: bool,
-}
-
-#[derive(Debug)]
-pub struct RecvConnectionTcpAbridged {
-    recv_socket: futures_util::io::ReadHalf<futures_util::compat::Compat01As03<TcpStream>>,
-}
-
 impl ConnectionTcpAbridged {
     pub fn split(self) -> (SendConnectionTcpAbridged, RecvConnectionTcpAbridged) {
         let Self { socket, is_first_request } = self;
@@ -209,132 +34,67 @@ impl ConnectionTcpAbridged {
     }
 }
 
-#[async_transform::impl_async_methods_to_impl_futures]
-impl SendConnectionTcpAbridged {
-    pub async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, MessagePlain<T>>(state, send_data).await
+generate_create_connection_methods_for!(ConnectionTcpAbridged,
+    connection_log_str = "TCP connection in abridged mode",
+    ret = Self { socket, is_first_request: true }
+);
+generate_send_connection_methods_for!(ConnectionTcpAbridged);
+generate_recv_connection_methods_for!(ConnectionTcpAbridged);
+generate_request_connection_methods_for!(ConnectionTcpAbridged);
+
+generate_send_raw_method_for!(ConnectionTcpAbridged,
+    prepare_send_data = prepare_send_data(raw_message, &mut self.is_first_request)?,
+    perform_send = {
+        let mut socket = {
+            let socket_mut = &mut self.socket;
+            let socket_mut03 = socket_mut.compat();
+            socket_mut03
+        };
+        common::perform_send(&mut socket, &data).await
     }
+);
 
-    pub async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, Message<T>>(state, send_data).await
-    }
+generate_recv_raw_method_for!(ConnectionTcpAbridged,
+    perform_recv = {
+        let socket_mut = &mut self.socket;
+        let mut socket_mut03 = socket_mut.compat();
+        perform_recv(&mut socket_mut03).await?
+    },
+    parse_response = tcp_common::parse_response::<S>(&data)?
+);
 
-    async fn impl_send<T, M>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        M: MessageCommon<T>,
-    {
-        let request_message = state.create_message::<T, M>(send_data)?;
-        debug!("Message to send: {:?}", request_message);
+delegate_impl_connection_for!(ConnectionTcpAbridged with
+    SendConnection = SendConnectionTcpAbridged,
+    RecvConnection = RecvConnectionTcpAbridged);
 
-        let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
-        self.send_raw(&raw_message).await
-    }
 
-    async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon,
-    {
-        debug!("Raw message to send: {:?}", raw_message);
-        let data = prepare_send_data(raw_message, &mut self.is_first_request)?;
-
-        common::perform_send(&mut self.send_socket, &data).await
-    }
+#[derive(Debug)]
+pub struct SendConnectionTcpAbridged {
+    send_socket: futures_util::io::WriteHalf<futures_util::compat::Compat01As03<TcpStream>>,
+    is_first_request: bool,
 }
 
-#[async_transform::impl_async_methods_to_impl_futures]
-impl RecvConnectionTcpAbridged {
-    pub async fn recv_plain<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, MessagePlain<U>>(state).await
-    }
+generate_send_connection_methods_for!(SendConnectionTcpAbridged);
+generate_send_raw_method_for!(SendConnectionTcpAbridged,
+    prepare_send_data = prepare_send_data(raw_message, &mut self.is_first_request)?,
+    perform_send = common::perform_send(&mut self.send_socket, &data).await
+);
 
-    pub async fn recv<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, Message<U>>(state).await
-    }
+delegate_impl_send_connection_for!(SendConnectionTcpAbridged);
 
-    async fn impl_recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        N: MessageCommon<U>,
-    {
-        let raw_message = self.recv_raw().await?;
-        let message = common::from_raw::<U, N>(&raw_message, state)?;
-        debug!("Received message: {:?}", message);
 
-        Ok(message.into_body())
-    }
-
-    pub async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        let data = perform_recv(&mut self.recv_socket).await?;
-        let raw_message = tcp_common::parse_response::<S>(&data)?;
-        debug!("Received raw message: {:?}", raw_message);
-
-        Ok(raw_message)
-    }
+#[derive(Debug)]
+pub struct RecvConnectionTcpAbridged {
+    recv_socket: futures_util::io::ReadHalf<futures_util::compat::Compat01As03<TcpStream>>,
 }
 
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl SendConnection for SendConnectionTcpAbridged {
-    async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.send_plain(state, send_data).await
-    }
+generate_recv_connection_methods_for!(RecvConnectionTcpAbridged);
+generate_recv_raw_method_for!(RecvConnectionTcpAbridged,
+    perform_recv = perform_recv(&mut self.recv_socket).await?,
+    parse_response = tcp_common::parse_response::<S>(&data)?
+);
 
-    async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.send(state, send_data).await
-    }
-
-    async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon + Sync,
-    {
-        self.send_raw(raw_message).await
-    }
-}
-
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl RecvConnection for RecvConnectionTcpAbridged {
-    async fn recv_plain<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.recv_plain(state).await
-    }
-
-    async fn recv<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.recv(state).await
-    }
-
-    async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        self.recv_raw().await
-    }
-}
+delegate_impl_recv_connection_for!(RecvConnectionTcpAbridged);
 
 
 async fn perform_recv<R>(recv: &mut R) -> error::Result<Vec<u8>>

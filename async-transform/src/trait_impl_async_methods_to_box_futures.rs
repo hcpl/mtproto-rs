@@ -11,28 +11,44 @@ pub(crate) fn expand(
     }
 
     if let Ok(mut item_impl) = syn::parse2::<syn::ItemImpl>(item.clone()) {
-        if item_impl.trait_.is_none() {
-            macro_error!(item, module_path!(), "can only be used on trait `impl` items");
-        }
+        if let Some((_excl_token, ref trait_path, _for_token)) = item_impl.trait_ {
+            let trait_lifetimes = path_lifetimes(trait_path);
 
-        let impl_lifetimes = item_impl.generics.lifetimes()
-            .map(|lifetime_def| &lifetime_def.lifetime)
-            .collect::<Vec<_>>();
-
-        for impl_item in &mut item_impl.items {
-            if let syn::ImplItem::Method(ref mut impl_item_method) = *impl_item {
-                if impl_item_method.sig.asyncness.is_some() {
-                    transform_impl_item_method(impl_item_method, &impl_lifetimes);
+            for impl_item in &mut item_impl.items {
+                if let syn::ImplItem::Method(ref mut impl_item_method) = *impl_item {
+                    if impl_item_method.sig.asyncness.is_some() {
+                        transform_impl_item_method(impl_item_method, &trait_lifetimes);
+                    }
                 }
             }
-        }
 
-        quote!(#item_impl)
-    } else {
-        macro_error!(item, module_path!(), "can only be used on trait `impl` items");
+            return quote!(#item_impl);
+        }
     }
+
+    macro_error!(item, module_path!(), "can only be used on trait `impl` items");
 }
 
+
+fn path_lifetimes(path: &syn::Path) -> Vec<&syn::Lifetime> {
+    path.segments.last().and_then(|last_pair| {
+        match last_pair.value().arguments {
+            syn::PathArguments::AngleBracketed(ref bracketed) => Some(bracketed),
+            syn::PathArguments::None             |
+            syn::PathArguments::Parenthesized(_) => None,
+        }
+    }).iter().flat_map(|bracketed| {
+        &bracketed.args
+    }).filter_map(|arg| {
+        match arg {
+            syn::GenericArgument::Lifetime(ref lifetime) => Some(lifetime),
+            syn::GenericArgument::Type(_)       |
+            syn::GenericArgument::Binding(_)    |
+            syn::GenericArgument::Constraint(_) |
+            syn::GenericArgument::Const(_)      => None,
+        }
+    }).collect()
+}
 
 fn transform_impl_item_method(
     impl_item_method: &mut syn::ImplItemMethod,

@@ -1,7 +1,6 @@
 use std::fmt;
 use std::marker::Unpin;
 use std::mem;
-use std::net::SocketAddr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use crc::crc32;
@@ -9,19 +8,12 @@ use error_chain::bail;
 use futures_io::AsyncRead;
 use futures_util::compat::{AsyncRead01CompatExt, Future01CompatExt};
 use futures_util::io::AsyncReadExt;
-use log::{debug, info};
-use serde::de::DeserializeOwned;
-use serde::ser::Serialize;
+use log::debug;
 use tokio_tcp::TcpStream;
 
 use crate::error::{self, ErrorKind};
-use crate::async_await::network::connection::common::{
-    self, DEFAULT_SERVER_ADDR, Connection, RecvConnection, SendConnection,
-};
-use crate::async_await::network::connection::tcp_common;
-use crate::network::state::State;
-use crate::tl::TLObject;
-use crate::tl::message::{Message, MessageCommon, MessagePlain, RawMessageCommon};
+use crate::async_await::network::connection::{common, tcp_common};
+use crate::tl::message::RawMessageCommon;
 use crate::utils::safe_uint_cast;
 
 
@@ -32,173 +24,6 @@ pub struct ConnectionTcpFull {
 }
 
 #[async_transform::impl_async_methods_to_impl_futures]
-impl ConnectionTcpFull {
-    pub async fn connect(server_addr: SocketAddr) -> error::Result<Self> {
-        info!("New TCP connection in full mode to {}", server_addr);
-        let socket = TcpStream::connect(&server_addr).compat().await?;
-
-        Ok(Self { socket, sent_counter: 0 })
-    }
-
-    pub async fn with_default_server() -> error::Result<Self> {
-        Self::connect(*DEFAULT_SERVER_ADDR).await
-    }
-
-
-    pub async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, MessagePlain<T>>(state, send_data).await
-    }
-
-    pub async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, Message<T>>(state, send_data).await
-    }
-
-    async fn impl_send<T, M>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        M: MessageCommon<T>,
-    {
-        let request_message = state.create_message::<T, M>(send_data)?;
-        debug!("Message to send: {:?}", request_message);
-
-        let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
-        self.send_raw(&raw_message).await
-    }
-
-    pub async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon,
-    {
-        debug!("Raw message to send: {:?}", raw_message);
-        let data = prepare_send_data(raw_message, &mut self.sent_counter)?;
-
-        let socket_mut = &mut self.socket;
-        let mut socket_mut03 = socket_mut.compat();
-        common::perform_send(&mut socket_mut03, &data).await
-    }
-
-
-    pub async fn recv_plain<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, MessagePlain<U>>(state).await
-    }
-
-    pub async fn recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, Message<U>>(state).await
-    }
-
-    async fn impl_recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        N: MessageCommon<U>,
-    {
-        let raw_message = self.recv_raw().await?;
-        let message = common::from_raw::<U, N>(&raw_message, state)?;
-        debug!("Received message: {:?}", message);
-
-        Ok(message.into_body())
-    }
-
-    pub async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        let socket_mut = &mut self.socket;
-        let mut socket_mut03 = socket_mut.compat();
-        let data = perform_recv(&mut socket_mut03).await?;
-        let raw_message = tcp_common::parse_response::<S>(&data)?;
-        debug!("Received raw message: {:?}", raw_message);
-
-        Ok(raw_message)
-    }
-
-
-    pub async fn request_plain<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_request::<T, U, MessagePlain<T>, MessagePlain<U>>(state, request_data).await
-    }
-
-    pub async fn request<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_request::<T, U, Message<T>, Message<U>>(state, request_data).await
-    }
-
-    async fn impl_request<T, U, M, N>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        M: MessageCommon<T>,
-        N: MessageCommon<U>,
-    {
-        self.impl_send::<T, M>(state, request_data).await?;
-        self.impl_recv::<U, N>(state).await
-    }
-}
-
-
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl Connection for ConnectionTcpFull {
-    type SendConnection = SendConnectionTcpFull;
-    type RecvConnection = RecvConnectionTcpFull;
-
-    async fn connect(server_addr: SocketAddr) -> error::Result<Self> {
-        Self::connect(server_addr).await
-    }
-
-    async fn with_default_server() -> error::Result<Self> {
-        Self::with_default_server().await
-    }
-
-    async fn request_plain<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.request_plain(state, request_data).await
-    }
-
-    async fn request<T, U>(&mut self, state: &mut State, request_data: T) -> error::Result<U>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.request(state, request_data).await
-    }
-
-    fn split(self) -> (Self::SendConnection, Self::RecvConnection) {
-        self.split()
-    }
-}
-
-
-#[derive(Debug)]
-pub struct SendConnectionTcpFull {
-    send_socket: futures_util::io::WriteHalf<futures_util::compat::Compat01As03<TcpStream>>,
-    sent_counter: u32,
-}
-
-#[derive(Debug)]
-pub struct RecvConnectionTcpFull {
-    recv_socket: futures_util::io::ReadHalf<futures_util::compat::Compat01As03<TcpStream>>,
-}
-
 impl ConnectionTcpFull {
     pub fn split(self) -> (SendConnectionTcpFull, RecvConnectionTcpFull) {
         let Self { socket, sent_counter } = self;
@@ -211,132 +36,67 @@ impl ConnectionTcpFull {
     }
 }
 
-#[async_transform::impl_async_methods_to_impl_futures]
-impl SendConnectionTcpFull {
-    pub async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, MessagePlain<T>>(state, send_data).await
+generate_create_connection_methods_for!(ConnectionTcpFull,
+    connection_log_str = "TCP connection in full mode",
+    ret = Self { socket, sent_counter: 0 }
+);
+generate_send_connection_methods_for!(ConnectionTcpFull);
+generate_recv_connection_methods_for!(ConnectionTcpFull);
+generate_request_connection_methods_for!(ConnectionTcpFull);
+
+generate_send_raw_method_for!(ConnectionTcpFull,
+    prepare_send_data = prepare_send_data(raw_message, &mut self.sent_counter)?,
+    perform_send = {
+        let mut socket = {
+            let socket_mut = &mut self.socket;
+            let socket_mut03 = socket_mut.compat();
+            socket_mut03
+        };
+        common::perform_send(&mut socket, &data).await
     }
+);
 
-    pub async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.impl_send::<T, Message<T>>(state, send_data).await
-    }
+generate_recv_raw_method_for!(ConnectionTcpFull,
+    perform_recv = {
+        let socket_mut = &mut self.socket;
+        let mut socket_mut03 = socket_mut.compat();
+        perform_recv(&mut socket_mut03).await?
+    },
+    parse_response = tcp_common::parse_response::<S>(&data)?
+);
 
-    async fn impl_send<T, M>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-        M: MessageCommon<T>,
-    {
-        let request_message = state.create_message::<T, M>(send_data)?;
-        debug!("Message to send: {:?}", request_message);
+delegate_impl_connection_for!(ConnectionTcpFull with
+    SendConnection = SendConnectionTcpFull,
+    RecvConnection = RecvConnectionTcpFull);
 
-        let raw_message = request_message.to_raw(state.auth_raw_key(), state.version)?;
-        self.send_raw(&raw_message).await
-    }
 
-    async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon,
-    {
-        debug!("Raw message to send: {:?}", raw_message);
-        let data = prepare_send_data(raw_message, &mut self.sent_counter)?;
-
-        common::perform_send(&mut self.send_socket, &data).await
-    }
+#[derive(Debug)]
+pub struct SendConnectionTcpFull {
+    send_socket: futures_util::io::WriteHalf<futures_util::compat::Compat01As03<TcpStream>>,
+    sent_counter: u32,
 }
 
-#[async_transform::impl_async_methods_to_impl_futures]
-impl RecvConnectionTcpFull {
-    pub async fn recv_plain<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, MessagePlain<U>>(state).await
-    }
+generate_send_connection_methods_for!(SendConnectionTcpFull);
+generate_send_raw_method_for!(SendConnectionTcpFull,
+    prepare_send_data = prepare_send_data(raw_message, &mut self.sent_counter)?,
+    perform_send = common::perform_send(&mut self.send_socket, &data).await
+);
 
-    pub async fn recv<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.impl_recv::<U, Message<U>>(state).await
-    }
+delegate_impl_send_connection_for!(SendConnectionTcpFull);
 
-    async fn impl_recv<U, N>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-        N: MessageCommon<U>,
-    {
-        let raw_message = self.recv_raw().await?;
-        let message = common::from_raw::<U, N>(&raw_message, state)?;
-        debug!("Received message: {:?}", message);
 
-        Ok(message.into_body())
-    }
-
-    pub async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        let data = perform_recv(&mut self.recv_socket).await?;
-        let raw_message = tcp_common::parse_response::<S>(&data)?;
-        debug!("Received raw message: {:?}", raw_message);
-
-        Ok(raw_message)
-    }
+#[derive(Debug)]
+pub struct RecvConnectionTcpFull {
+    recv_socket: futures_util::io::ReadHalf<futures_util::compat::Compat01As03<TcpStream>>,
 }
 
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl SendConnection for SendConnectionTcpFull {
-    async fn send_plain<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.send_plain(state, send_data).await
-    }
+generate_recv_connection_methods_for!(RecvConnectionTcpFull);
+generate_recv_raw_method_for!(RecvConnectionTcpFull,
+    perform_recv = perform_recv(&mut self.recv_socket).await?,
+    parse_response = tcp_common::parse_response::<S>(&data)?
+);
 
-    async fn send<T>(&mut self, state: &mut State, send_data: T) -> error::Result<()>
-    where
-        T: fmt::Debug + Serialize + TLObject + Send,
-    {
-        self.send(state, send_data).await
-    }
-
-    async fn send_raw<R>(&mut self, raw_message: &R) -> error::Result<()>
-    where
-        R: RawMessageCommon + Sync,
-    {
-        self.send_raw(raw_message).await
-    }
-}
-
-#[async_transform::trait_impl_async_methods_to_box_futures]
-impl RecvConnection for RecvConnectionTcpFull {
-    async fn recv_plain<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.recv_plain(state).await
-    }
-
-    async fn recv<U>(&mut self, state: &mut State) -> error::Result<U>
-    where
-        U: fmt::Debug + DeserializeOwned + TLObject + Send,
-    {
-        self.recv(state).await
-    }
-
-    async fn recv_raw<S>(&mut self) -> error::Result<S>
-    where
-        S: RawMessageCommon,
-    {
-        self.recv_raw().await
-    }
-}
+delegate_impl_recv_connection_for!(RecvConnectionTcpFull);
 
 
 async fn perform_recv<R>(recv: &mut R) -> error::Result<Vec<u8>>
