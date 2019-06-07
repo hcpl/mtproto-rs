@@ -1,6 +1,6 @@
 [package]
 name = "async-transform"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2018"
 authors = ["Nguyen Duc My <hcpl.prog@gmail.com>"]
 

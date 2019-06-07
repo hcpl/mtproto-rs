@@ -20,7 +20,7 @@ macro_rules! macro_no_args_error {
 }
 
 mod item_trait_with_async_methods;
-pub(crate) use item_trait_with_async_methods::ItemTraitWithAsyncMethods;
+pub(crate) use self::item_trait_with_async_methods::ItemTraitWithAsyncMethods;
 
 mod transform;
 

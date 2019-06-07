@@ -5,7 +5,7 @@ pub(crate) struct ItemTraitWithAsyncMethods(pub(crate) syn::ItemTrait);
 
 impl syn::parse::Parse for ItemTraitWithAsyncMethods {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        parse_item_trait_with_async_methods(input).map(Self)
+        parse_item_trait_with_async_methods(input).map(ItemTraitWithAsyncMethods)
     }
 }
 

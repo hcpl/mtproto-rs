@@ -19,7 +19,7 @@ members = ["async-transform"]
 
 [dependencies]
 aes = { version = "0.3", optional = true }
-async-transform = { path = "async-transform", optional = true }
+async-transform = { version = "0.0.1", path = "async-transform", optional = true }
 arrayref = "0.3"
 base64 = { version = "0.10", optional = true }
 byteorder = "1.2"
