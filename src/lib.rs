@@ -25,6 +25,7 @@ pub mod error;
 pub mod manual_types;
 pub mod network;
 pub mod protocol;
+pub mod server;
 pub mod tl;
 
 // Use this hack because `include!` and top-level inner attributes don't mix well

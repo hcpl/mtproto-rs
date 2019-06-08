@@ -3,21 +3,21 @@ use std::mem;
 use std::net::SocketAddr;
 
 use futures::{
-    self, Future, Sink, Stream,
+    Future, Sink, Stream,
     sync::mpsc,
 };
 use log::error;
 use serde::ser::Serialize;
 use serde::de::DeserializeOwned;
-use tokio_executor;
 
 use crate::error::{self, ErrorKind};
 use crate::network::{
     auth::connect_auth_with_state_retryable,
-    connection::{DEFAULT_SERVER_ADDR, Connection},
+    connection::Connection,
     state::State,
 };
 use crate::protocol::ProtocolVersion;
+use crate::server::DEFAULT_SERVER_ADDR;
 use crate::tl::TLObject;
 use crate::tl::message::{Message, RawMessage};
 

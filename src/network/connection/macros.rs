@@ -23,7 +23,7 @@ macro_rules! generate_create_connection_methods {
             Error = crate::error::Error,
         >
         {
-            use crate::async_await::network::connection::common::DEFAULT_SERVER_ADDR;
+            use crate::server::DEFAULT_SERVER_ADDR;
 
             Self::connect(*DEFAULT_SERVER_ADDR)
         }

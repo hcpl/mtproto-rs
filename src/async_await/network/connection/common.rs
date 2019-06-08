@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use error_chain::bail;
 use futures_io::AsyncWrite;
 use futures_util::AsyncWriteExt;
-use lazy_static::lazy_static;
 use log::debug;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
@@ -15,15 +14,6 @@ use crate::error::{self, ErrorKind};
 use crate::tl::TLObject;
 use crate::tl::message::{MessageCommon, RawMessageCommon};
 use crate::network::state::State;
-
-
-lazy_static! {
-    pub static ref SERVER_ADDRS: [SocketAddr; 1] = [
-        ([149, 154, 167, 51], 443).into(),
-    ];
-
-    pub static ref DEFAULT_SERVER_ADDR: SocketAddr = SERVER_ADDRS[0];
-}
 
 
 #[async_transform::trait_decl_async_methods_to_box_futures]

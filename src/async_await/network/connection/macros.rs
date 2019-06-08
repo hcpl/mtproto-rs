@@ -17,7 +17,7 @@ macro_rules! generate_create_connection_methods_for {
             }
 
             pub async fn with_default_server() -> crate::error::Result<Self> {
-                use crate::async_await::network::connection::common::DEFAULT_SERVER_ADDR;
+                use crate::server::DEFAULT_SERVER_ADDR;
 
                 Self::connect(*DEFAULT_SERVER_ADDR).await
             }
