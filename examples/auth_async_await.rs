@@ -7,12 +7,12 @@ use futures_util::{
 use log::error;
 use mtproto::{
     async_await::network::connection::{
-        DEFAULT_SERVER_ADDR,
         Connection, ConnectionHttp, ConnectionTcpAbridged, ConnectionTcpIntermediate, ConnectionTcpFull,
     },
     async_await::network::auth,
     network::state::State,
     protocol::ProtocolVersion,
+    server::DEFAULT_SERVER_ADDR,
 };
 
 

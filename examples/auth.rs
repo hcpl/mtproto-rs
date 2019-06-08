@@ -3,11 +3,11 @@ use log::error;
 use mtproto::{
     network::auth,
     network::connection::{
-        DEFAULT_SERVER_ADDR,
         Connection, ConnectionHttp, ConnectionTcpAbridged, ConnectionTcpIntermediate, ConnectionTcpFull,
     },
     network::state::State,
     protocol::ProtocolVersion,
+    server::DEFAULT_SERVER_ADDR,
 };
 
 
